@@ -1,0 +1,165 @@
+/* src/pages/AuthPage.css - Ulepszony Glassmorphism */
+.auth-root {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-base);
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    z-index: 1;
+}
+
+/* Pływające kule światła (Blobs) */
+.auth-root::before,
+.auth-root::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.45;
+    pointer-events: none;
+    z-index: -1;
+}
+
+@keyframes float1 {
+
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    50% {
+        transform: translate(-40px, -40px) scale(1.1);
+    }
+}
+
+@keyframes float2 {
+
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    50% {
+        transform: translate(40px, 40px) scale(0.9);
+    }
+}
+
+.auth-root::before {
+    width: 550px;
+    height: 550px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+    top: -160px;
+    left: -160px;
+    animation: float1 15s ease-in-out infinite;
+}
+
+.auth-root::after {
+    width: 450px;
+    height: 450px;
+    background: radial-gradient(circle, var(--accent-2) 0%, transparent 70%);
+    bottom: -120px;
+    right: -120px;
+    animation: float2 20s ease-in-out infinite;
+    animation-delay: -5s;
+}
+
+/* Prawdziwy Glassmorphism dla samej karty */
+.auth-card {
+    width: 100%;
+    max-width: 420px;
+    background: rgba(19, 22, 42, 0.45);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-xl);
+    padding: 40px 36px;
+    box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    position: relative;
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auth-logo {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.auth-logo-icon {
+    font-size: 2.5rem;
+    display: block;
+    margin-bottom: 8px;
+    filter: drop-shadow(0 4px 12px var(--accent-glow));
+}
+
+.auth-logo h1 {
+    font-size: 1.7rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #fff, var(--accent-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+}
+
+.auth-logo p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* Tabs: Logowanie / Rejestracja */
+.auth-tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    padding: 5px;
+    margin-bottom: 32px;
+    gap: 5px;
+}
+
+.auth-tab {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auth-tab:hover:not(.active) {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.auth-tab.active {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 4px 14px var(--accent-glow);
+    transform: scale(1.02);
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.auth-divider {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 24px;
+    transition: color 0.2s;
+}
+
+.auth-divider:hover {
+    color: var(--text-primary);
+}

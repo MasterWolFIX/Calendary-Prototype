@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, StatusBar, KeyboardAvoidingView, Platform, FlatList, Modal
+  ActivityIndicator, Alert, StatusBar, KeyboardAvoidingView, Platform, FlatList, Modal, Switch
 } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
@@ -30,6 +30,11 @@ LocaleConfig.locales['pl'] = {
 LocaleConfig.defaultLocale = 'pl';
 
 const API_URL = 'http://192.168.1.55:3000/api';
+
+const EVENT_COLORS = [
+  '#7c5cfc', '#06b6d4', '#f59e0b', '#34d399',
+  '#f87171', '#fb7185', '#a78bfa', '#38bdf8',
+];
 
 const calendarTheme = {
   calendarBackground: '#13162a',
@@ -68,6 +73,8 @@ export default function App() {
   // Czasy Start / Koniec dla nowego wydarzenia
   const [startTime, setStartTime] = useState(new Date());
   const [endTime, setEndTime] = useState(new Date());
+  const [hasEndTime, setHasEndTime] = useState(true);
+  const [newEventColor, setNewEventColor] = useState(EVENT_COLORS[0]);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState('startTime'); // 'startTime' albo 'endTime'
 
@@ -197,13 +204,15 @@ export default function App() {
         title: newEventTitle,
         description: newEventDesc,
         start_date: finalizeDate(startTime),
-        end_date: finalizeDate(endTime)
+        end_date: hasEndTime ? finalizeDate(endTime) : null,
+        color: newEventColor
       }, { headers: { Authorization: `Bearer ${token}` } });
 
       Alert.alert('Sukces', 'Zapisano wydarzenie!');
       setModalVisible(false);
       setNewEventTitle('');
       setNewEventDesc('');
+      setNewEventColor(EVENT_COLORS[0]);
       setRefreshKey(prev => prev + 1); // Odśwież widok
     } catch (error) {
       Alert.alert('Błąd', 'Nie udało się dodać wydarzenia.');
@@ -243,7 +252,9 @@ export default function App() {
   const currentEvents = eventsMap[selectedDate] || [];
   const markedDates = {
     ...Object.keys(eventsMap).reduce((acc, date) => {
-      acc[date] = { marked: true, dotColor: '#7c5cfc' };
+      // Bierzemy kolor pierwszej kropki jeśli są wydarzenia
+      const color = eventsMap[date][0]?.color || '#7c5cfc';
+      acc[date] = { marked: true, dotColor: color };
       return acc;
     }, {})
   };
@@ -253,11 +264,16 @@ export default function App() {
 
   const renderEventItem = ({ item }) => (
     <TouchableOpacity
-      style={styles.itemCard}
+      style={[styles.itemCard, { borderLeftColor: item.color || '#7c5cfc', borderLeftWidth: 4 }]}
       onLongPress={() => handleDeleteEvent(item.id, item.title)}
-      onPress={() => Alert.alert('Szczegóły', `${item.title}\n${item.description}\n\nOd: ${formatTime(item.start)}\nDo: ${formatTime(item.end)}`)}
+      onPress={() => Alert.alert('Szczegóły', `${item.title}\n${item.description}\n\nOd: ${formatTime(item.start)}${item.end_date ? `\nDo: ${formatTime(item.end)}` : ''}`)}
     >
-      <Text style={styles.itemTime}>{formatTime(item.start)} - {formatTime(item.end)}</Text>
+      <View style={styles.itemHeader}>
+        <Text style={[styles.itemTime, { color: item.color || '#06b6d4' }]}>
+          {formatTime(item.start)} {item.end_date ? `- ${formatTime(item.end)}` : '(Cały dzień)'}
+        </Text>
+        <View style={[styles.colorDot, { backgroundColor: item.color || '#7c5cfc' }]} />
+      </View>
       <Text style={styles.itemTitle}>{item.title}</Text>
       {item.description ? <Text style={styles.itemDesc} numberOfLines={1}>{item.description}</Text> : null}
       <Text style={styles.trashHint}>(Przytrzymaj by usunąć)</Text>
@@ -316,16 +332,46 @@ export default function App() {
               <TextInput style={[styles.modalInput, styles.textArea]} placeholder="Notatka (opcjonalnie)"
                 placeholderTextColor="#64748B" multiline value={newEventDesc} onChangeText={setNewEventDesc} />
 
+              <View style={styles.switchContainer}>
+                <Text style={styles.switchLabel}>Czas zakończenia</Text>
+                <Switch
+                  value={hasEndTime}
+                  onValueChange={setHasEndTime}
+                  trackColor={{ false: '#334155', true: '#7c5cfc' }}
+                  thumbColor={hasEndTime ? '#fff' : '#94a3b8'}
+                />
+              </View>
+
               {/* Pickery */}
               <View style={styles.timePickers}>
                 <TouchableOpacity style={styles.timeBtn} onPress={() => openTimePicker('startTime')}>
                   <Text style={styles.timeLabel}>Od:</Text>
                   <Text style={styles.timeValue}>{formatTime(startTime)}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.timeBtn} onPress={() => openTimePicker('endTime')}>
-                  <Text style={styles.timeLabel}>Do:</Text>
-                  <Text style={styles.timeValue}>{formatTime(endTime)}</Text>
-                </TouchableOpacity>
+                {hasEndTime && (
+                  <TouchableOpacity style={styles.timeBtn} onPress={() => openTimePicker('endTime')}>
+                    <Text style={styles.timeLabel}>Do:</Text>
+                    <Text style={styles.timeValue}>{formatTime(endTime)}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Wybór koloru */}
+              <Text style={[styles.inputLabel, { marginBottom: 10 }]}>KOLOR WYDARZENIA</Text>
+              <View style={styles.colorPickerContainer}>
+                {EVENT_COLORS.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => setNewEventColor(c)}
+                    style={[
+                      styles.colorCircle,
+                      { backgroundColor: c },
+                      newEventColor === c && styles.colorCircleSelected
+                    ]}
+                  >
+                    {newEventColor === c && <Text style={styles.checkIcon}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
               </View>
 
               <View style={styles.modalActions}>
@@ -406,28 +452,38 @@ const styles = StyleSheet.create({
   calendarStyle: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
   listContainer: { flex: 1, backgroundColor: '#0d0f1a', position: 'relative' },
   listHeader: { color: '#8b8fa8', fontSize: 14, fontWeight: '700', padding: 15, backgroundColor: '#121523' },
-  flatListContent: { padding: 15, paddingBottom: 100 }, // Miejsce na pływający guzik
-  itemCard: { backgroundColor: '#13162a', borderRadius: 10, padding: 15, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(124, 92, 252, 0.3)' },
-  itemTime: { color: '#06b6d4', fontSize: 13, fontWeight: 'bold', marginBottom: 4 },
+  flatListContent: { padding: 15, paddingBottom: 100 },
+  itemCard: { backgroundColor: '#13162a', borderRadius: 10, padding: 15, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.05)' },
+  itemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+  itemTime: { fontSize: 13, fontWeight: 'bold' },
   itemTitle: { color: '#fff', fontSize: 16, fontWeight: '600' },
   itemDesc: { color: '#94A3B8', fontSize: 13, marginTop: 5 },
+  colorDot: { width: 10, height: 10, borderRadius: 5 },
   emptyText: { textAlign: 'center', color: '#64748B', fontSize: 14, marginTop: 30 },
-  trashHint: { color: '#EF4444', fontSize: 10, marginTop: 10, opacity: 0.8 },
+  trashHint: { color: '#EF4444', fontSize: 10, marginTop: 10, opacity: 0.6 },
 
-  // Pływający Przycisk (FAB)
   fab: { position: 'absolute', right: 20, bottom: 20, width: 60, height: 60, borderRadius: 30, backgroundColor: '#7c5cfc', justifyContent: 'center', alignItems: 'center', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.8, shadowRadius: 2 },
   fabText: { fontSize: 30, color: '#fff', lineHeight: 34 },
 
-  // Modale i Formularz
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalBox: { width: '100%', backgroundColor: '#121523', borderRadius: 20, padding: 25, borderWidth: 1, borderColor: '#7c5cfc' },
   modalTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
   modalInput: { backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 15, borderRadius: 10, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   textArea: { height: 80, textAlignVertical: 'top' },
+
+  switchContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, backgroundColor: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 10 },
+  switchLabel: { color: '#fff', fontSize: 14 },
+
   timePickers: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   timeBtn: { flex: 1, backgroundColor: 'rgba(124, 92, 252, 0.1)', padding: 15, borderRadius: 10, marginHorizontal: 5, alignItems: 'center' },
   timeLabel: { color: '#94A3B8', fontSize: 12, marginBottom: 5 },
   timeValue: { color: '#06b6d4', fontSize: 16, fontWeight: 'bold' },
+
+  colorPickerContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 25 },
+  colorCircle: { width: 35, height: 35, borderRadius: 17.5, justifyContent: 'center', alignItems: 'center' },
+  colorCircleSelected: { borderWidth: 2, borderColor: '#fff' },
+  checkIcon: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 },
   cancelBtn: { padding: 15, marginRight: 10 },
   cancelText: { color: '#94A3B8', fontWeight: 'bold' },

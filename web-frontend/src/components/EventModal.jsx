@@ -20,6 +20,7 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
     const [desc, setDesc] = useState('');
     const [start, setStart] = useState('');
     const [end, setEnd] = useState('');
+    const [hasEnd, setHasEnd] = useState(true);
     const [color, setColor] = useState(EVENT_COLORS[0]);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -29,7 +30,13 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
             setTitle(event.title || '');
             setDesc(event.description || '');
             setStart(toLocalDatetimeValue(event.start || event.start_date));
-            setEnd(toLocalDatetimeValue(event.end || event.end_date));
+            if (event.end || event.end_date) {
+                setEnd(toLocalDatetimeValue(event.end || event.end_date));
+                setHasEnd(true);
+            } else {
+                setEnd('');
+                setHasEnd(false);
+            }
             setColor(event.color || EVENT_COLORS[0]);
         }
     }, [event]);
@@ -38,12 +45,14 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
         e.preventDefault();
         setError('');
         if (!title.trim()) { setError('Tytuł jest wymagany.'); return; }
-        if (!start || !end) { setError('Daty są wymagane.'); return; }
-        if (new Date(start) >= new Date(end)) { setError('Data końca musi być późniejsza niż data początku.'); return; }
+        if (!start) { setError('Data początku jest wymagana.'); return; }
+        if (hasEnd && !end) { setError('Data końca jest wymagana, jeśli zaznaczono opcję.'); return; }
+        if (hasEnd && new Date(start) >= new Date(end)) { setError('Data końca musi być późniejsza niż data początku.'); return; }
 
         setLoading(true);
         try {
-            await onSave({ title, description: desc, start_date: new Date(start).toISOString(), end_date: new Date(end).toISOString(), color });
+            const finalEnd = hasEnd ? new Date(end).toISOString() : null;
+            await onSave({ title, description: desc, start_date: new Date(start).toISOString(), end_date: finalEnd, color });
             onClose();
         } catch (err) {
             setError(err.response?.data?.error || 'Błąd zapisu.');
@@ -102,28 +111,44 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
                             />
                         </div>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                            <div className="form-group">
-                                <label className="form-label" htmlFor="ev-start">Początek *</label>
-                                <input
-                                    id="ev-start"
-                                    className="form-input"
-                                    type="datetime-local"
-                                    value={start}
-                                    onChange={(e) => setStart(e.target.value)}
-                                    required
-                                />
+                        <div style={{ display: 'grid', gap: 12 }}>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label">
+                                    <input
+                                        type="checkbox"
+                                        checked={hasEnd}
+                                        onChange={(e) => setHasEnd(e.target.checked)}
+                                        style={{ marginRight: 8 }}
+                                    />
+                                    Wydarzenie posiada czas zakończenia
+                                </label>
                             </div>
-                            <div className="form-group">
-                                <label className="form-label" htmlFor="ev-end">Koniec *</label>
-                                <input
-                                    id="ev-end"
-                                    className="form-input"
-                                    type="datetime-local"
-                                    value={end}
-                                    onChange={(e) => setEnd(e.target.value)}
-                                    required
-                                />
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="ev-start">Początek *</label>
+                                    <input
+                                        id="ev-start"
+                                        className="form-input"
+                                        type={hasEnd ? "datetime-local" : "date"}
+                                        value={hasEnd ? start : start.split('T')[0]}
+                                        onChange={(e) => setStart(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                                {hasEnd && (
+                                    <div className="form-group">
+                                        <label className="form-label" htmlFor="ev-end">Koniec *</label>
+                                        <input
+                                            id="ev-end"
+                                            className="form-input"
+                                            type="datetime-local"
+                                            value={end}
+                                            onChange={(e) => setEnd(e.target.value)}
+                                            required={hasEnd}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -142,12 +167,19 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
                                             borderRadius: '50%',
                                             background: c,
                                             border: color === c ? '3px solid #fff' : '3px solid transparent',
-                                            outline: color === c ? `2px solid ${c}` : 'none',
+                                            outline: color === c ? `3px solid ${c}` : 'none',
                                             cursor: 'pointer',
-                                            transition: 'transform 0.15s',
-                                            transform: color === c ? 'scale(1.2)' : 'scale(1)',
+                                            transition: 'transform 0.15s, opacity 0.15s',
+                                            transform: color === c ? 'scale(1.15) translateY(-2px)' : 'scale(1)',
+                                            opacity: color === c ? 1 : 0.6,
+                                            boxShadow: color === c ? `0 4px 12px ${c}80` : 'none',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
                                         }}
-                                    />
+                                    >
+                                        {color === c && <span style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>✓</span>}
+                                    </button>
                                 ))}
                             </div>
                         </div>

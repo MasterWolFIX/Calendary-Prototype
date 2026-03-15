@@ -39,7 +39,7 @@ router.get('/', async (req, res) => {
 
     try {
         let query = `
-      SELECT id, title, description, start_date, end_date, notified
+      SELECT id, title, description, start_date, end_date, notified, color
       FROM   events
       WHERE  user_id = $1
     `;
@@ -81,17 +81,17 @@ router.get('/', async (req, res) => {
  * Odpowiedź 201: { event: { id, title, description, start_date, end_date, notified } }
  */
 router.post('/', async (req, res) => {
-    const { title, description, start_date, end_date } = req.body ?? {};
+    const { title, description, start_date, end_date, color } = req.body ?? {};
     const userId = req.user.userId;
 
     // ── Walidacja ──────────────────────────────────────────────────────────────
-    if (!title || !start_date || !end_date) {
+    if (!title || !start_date) {
         return res.status(400).json({
-            error: 'Pola title, start_date i end_date są wymagane.',
+            error: 'Pola title i start_date są wymagane.',
         });
     }
 
-    if (new Date(start_date) >= new Date(end_date)) {
+    if (end_date && new Date(start_date) > new Date(end_date)) {
         return res.status(400).json({
             error: 'start_date musi być wcześniejsza niż end_date.',
         });
@@ -99,10 +99,10 @@ router.post('/', async (req, res) => {
 
     try {
         const result = await pool.query(
-            `INSERT INTO events (user_id, title, description, start_date, end_date)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, title, description, start_date, end_date, notified`,
-            [userId, title, description ?? null, start_date, end_date]
+            `INSERT INTO events (user_id, title, description, start_date, end_date, color)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, title, description, start_date, end_date, notified, color`,
+            [userId, title, description ?? null, start_date, end_date ?? null, color ?? null]
         );
 
         return res.status(201).json({ event: result.rows[0] });
@@ -130,7 +130,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const eventId = parseInt(req.params.id, 10);
     const userId = req.user.userId;
-    const { title, description, start_date, end_date } = req.body ?? {};
+    const { title, description, start_date, end_date, color } = req.body ?? {};
 
     if (isNaN(eventId)) {
         return res.status(400).json({ error: 'Nieprawidłowe ID wydarzenia.' });
@@ -157,6 +157,7 @@ router.put('/:id', async (req, res) => {
         if (description !== undefined) { params.push(description); fields.push(`description = $${params.length}`); }
         if (start_date !== undefined) { params.push(start_date); fields.push(`start_date = $${params.length}`); }
         if (end_date !== undefined) { params.push(end_date); fields.push(`end_date = $${params.length}`); }
+        if (color !== undefined) { params.push(color); fields.push(`color = $${params.length}`); }
 
         if (fields.length === 0) {
             return res.status(400).json({ error: 'Nie podano żadnych pól do aktualizacji.' });
@@ -172,7 +173,7 @@ router.put('/:id', async (req, res) => {
       UPDATE events
       SET    ${fields.join(', ')}
       WHERE  id = $${params.length}
-      RETURNING id, title, description, start_date, end_date, notified
+      RETURNING id, title, description, start_date, end_date, notified, color
     `;
 
         const result = await pool.query(query, params);

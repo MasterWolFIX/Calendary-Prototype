@@ -22,6 +22,7 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -226,6 +227,26 @@ router.post('/login', async (req, res) => {
         return res.status(500).json({
             error: 'Wewnętrzny błąd serwera. Spróbuj ponownie później.',
         });
+    }
+});
+
+// ── POST /api/auth/fcm-token ──────────────────────────────────────────────────
+router.post('/fcm-token', authMiddleware, async (req, res) => {
+    const { token } = req.body;
+
+    if (!token) {
+        return res.status(400).json({ error: 'Token jest wymagany.' });
+    }
+
+    try {
+        await pool.query(
+            'UPDATE users SET fcm_token = $1 WHERE id = $2',
+            [token, req.user.userId]
+        );
+        return res.status(200).json({ message: 'Token zapisany poprawnie.' });
+    } catch (err) {
+        console.error('[POST /api/auth/fcm-token] Błąd:', err.message);
+        return res.status(500).json({ error: 'Wewnętrzny błąd serwera' });
     }
 });
 

@@ -1,55 +1,20 @@
 'use strict';
 
 const cron = require('node-cron');
-const admin = require('firebase-admin');
+const { Expo } = require('expo-server-sdk');
 const pool = require('../db');
 
 /**
  * services/notificationService.js
  * ────────────────────────────────────────────────────────────────────────────
- * Silnik powiadomień push (Firebase Cloud Messaging).
- *
- * Uruchamia zadanie cron co 15 minut, które:
- *   1. Pobiera z bazy wszystkie wydarzenia zaplanowane w ciągu najbliższych 24h
- *      i z flagą notified = false.
- *   2. Pobiera fcm_token właściciela każdego takiego wydarzenia.
- *   3. Wysyła powiadomienie push przez Firebase Cloud Messaging.
- *   4. Ustawia notified = true, żeby nie wysyłać duplikatów.
- *
- * Zmienna środowiskowa:
- *   FIREBASE_ADMIN_SDK_JSON – ścieżka lub zawartość JSON Service Account
- *
- * Inicjalizacja Firebase:
- *   Moduł inicjalizuje Firebase Admin SDK przy pierwszym imporcie.
- *   Wywołaj initNotificationService() w server.js po starcie Express.
- * ────────────────────────────────────────────────────────────────────────────
+ * Silnik powiadomień push (Expo Push Notifications + Cron)
  */
 
-let firebaseInitialized = false;
-
-/**
- * Inicjalizuje Firebase Admin SDK.
- * Bezpieczne do wielokrotnego wywołania (idempotentne).
- */
-function initFirebase() {
-    if (firebaseInitialized || admin.apps.length > 0) return;
-
-    try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_JSON);
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-        });
-        firebaseInitialized = true;
-        console.log('[FCM] Firebase Admin SDK zainicjalizowany.');
-    } catch (err) {
-        console.error('[FCM] Błąd inicjalizacji Firebase Admin SDK:', err.message);
-        console.error('[FCM] Sprawdź zmienną środowiskową FIREBASE_ADMIN_SDK_JSON.');
-    }
-}
+let expo = new Expo();
 
 /**
  * Główna funkcja silnika powiadomień.
- * Sprawdza bazę i wysyła powiadomienia push dla nadchodzących wydarzeń.
+ * Sprawdza bazę i wysyła powiadomienia push przez infrastrukturę Expo.
  */
 async function sendPendingNotifications() {
     console.log('[CRON] Sprawdzam nadchodzące wydarzenia...');
@@ -81,66 +46,65 @@ async function sendPendingNotifications() {
 
         console.log(`[CRON] Znaleziono ${result.rows.length} wydarzeń do powiadomienia.`);
 
+        let messages = [];
+        let eventIdsToUpdate = [];
+
         for (const row of result.rows) {
+            if (!Expo.isExpoPushToken(row.fcm_token)) {
+                console.error(`[CRON] Token ${row.fcm_token} nie jest poprawnym tokenem Expo! Pomijam.`);
+                continue;
+            }
+
             const startDate = new Date(row.start_date);
             const timeStr = startDate.toLocaleTimeString('pl-PL', {
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: 'Europe/Warsaw',
+                hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw',
             });
 
-            // Treść powiadomienia push
-            const message = {
-                token: row.fcm_token,
-                notification: {
-                    title: '📅 Nadchodzące wydarzenie',
-                    body: `Masz jutro wydarzenie: "${row.title}" o godzinie ${timeStr}`,
-                },
-                data: {
-                    event_id: String(row.event_id),
-                    start_date: row.start_date.toISOString(),
-                },
-                android: {
-                    priority: 'high',
-                    notification: {
-                        sound: 'default',
-                        channelId: 'calendary_reminders',
-                        clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-                    },
-                },
-            };
+            messages.push({
+                to: row.fcm_token,
+                sound: 'default',
+                title: '📅 Nadchodzące wydarzenie',
+                body: `Masz jutro wydarzenie: "${row.title}" o godzinie ${timeStr}`,
+                data: { event_id: String(row.event_id) },
+                channelId: 'calendary_reminders', // potrzebne na Androidzie
+            });
+            eventIdsToUpdate.push(row.event_id);
+        }
 
+        // Wysyłanie paczkami po max 100 sztuk (limit Expo)
+        let chunks = expo.chunkPushNotifications(messages);
+
+        for (let chunk of chunks) {
             try {
-                const response = await admin.messaging().send(message);
-                console.log(`[FCM] Wysłano powiadomienie dla wydarzenia #${row.event_id}. FCM ID: ${response}`);
-
-                // Oznacz wydarzenie jako powiadomione
-                await pool.query(
-                    'UPDATE events SET notified = TRUE WHERE id = $1',
-                    [row.event_id]
-                );
-            } catch (fcmErr) {
-                console.error(`[FCM] Błąd wysyłania dla wydarzenia #${row.event_id}:`, fcmErr.message);
-                // Nie przerywamy pętli – przechodzimy do kolejnego wydarzenia
+                let receipts = await expo.sendPushNotificationsAsync(chunk);
+                console.log('[FCM] Wysłano paczkę powiadomień Expo:', receipts);
+            } catch (error) {
+                console.error('[FCM] Błąd przy wysyłaniu powiadomienia Expo:', error);
             }
         }
+
+        // Oznacz wydarzenia jako powiadomione w bazie
+        if (eventIdsToUpdate.length > 0) {
+            const idsList = eventIdsToUpdate.join(',');
+            await pool.query(`UPDATE events SET notified = TRUE WHERE id = ANY(ARRAY[${idsList}]::int[])`);
+            console.log(`[CRON] Oznaczono ${eventIdsToUpdate.length} wydarzeń jako powiadomione (notified=true).`);
+        }
+
     } catch (err) {
         console.error('[CRON] Błąd podczas sprawdzania powiadomień:', err.message);
     }
 }
 
 function initNotificationService() {
-    initFirebase();
-
-    // Uruchom raz natychmiast przy starcie (opcjonalne – przydatne przy restarcie serwera)
+    // Od razu odpytaj
     sendPendingNotifications();
 
-    // Zaplanuj cykliczne sprawdzanie co 15 minut
+    // Następnie co 15 minut
     cron.schedule('*/15 * * * *', () => {
         sendPendingNotifications();
     });
 
-    console.log('[CRON] Silnik powiadomień uruchomiony (co 15 minut).');
+    console.log('[CRON] Silnik powiadomień Expo uruchomiony (co 15 minut).');
 }
 
 module.exports = { initNotificationService };

@@ -7,3 +7,4 @@ mobile-app/node_modules/
 dist/
 build/
 *.log
+cloudflared.exe

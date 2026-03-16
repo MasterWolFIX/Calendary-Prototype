@@ -22,28 +22,28 @@ Notifications.setNotificationHandler({
 
 // ── Język PL ───────────────────────────────────────────────────────────────
 LocaleConfig.locales['pl'] = {
-  monthNames: ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'],
-  monthNamesShort: ['Sty','Lut','Mar','Kwi','Maj','Cze','Lip','Sie','Wrz','Paź','Lis','Gru'],
-  dayNames: ['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'],
-  dayNamesShort: ['Nd','Pn','Wt','Śr','Cz','Pt','Sb'],
+  monthNames: ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'],
+  monthNamesShort: ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'],
+  dayNames: ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'],
+  dayNamesShort: ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb'],
   today: 'Dzisiaj',
 };
 LocaleConfig.defaultLocale = 'pl';
 
-const API_URL = 'http://10.40.31.197:3000/api';
+const API_URL = 'https://api.slezinski.com/api';
 
 // Paleta kolorów
 const C = {
-  bg:      '#07090F',
+  bg: '#07090F',
   surface: '#0D1117',
-  card:    '#111827',
-  border:  'rgba(255,255,255,0.07)',
-  accent:  '#6366f1',
+  card: '#111827',
+  border: 'rgba(255,255,255,0.07)',
+  accent: '#6366f1',
   accentDim: 'rgba(99,102,241,0.12)',
-  text:    '#e2e8f0',
-  sub:     '#64748b',
-  muted:   '#374151',
-  danger:  '#ef4444',
+  text: '#e2e8f0',
+  sub: '#64748b',
+  muted: '#374151',
+  danger: '#ef4444',
 };
 
 const calTheme = {
@@ -67,62 +67,94 @@ const calTheme = {
   textDayHeaderFontSize: 11,
 };
 
-async function scheduleNotification(title, startISO) {
+const NOTIF_OPTIONS = [
+  { label: 'W momencie wydarzenia', value: 0 },
+  { label: '5 minut wcześniej', value: 5 },
+  { label: '10 minut wcześniej', value: 10 },
+  { label: '15 minut wcześniej', value: 15 },
+  { label: '30 minut wcześniej', value: 30 },
+  { label: '1 godzinę wcześniej', value: 60 },
+  { label: '2 godziny wcześniej', value: 120 },
+];
+
+const COLORS = [C.accent, '#ef4444', '#10b981', '#f59e0b', '#3b82f6', '#ec4899'];
+
+async function scheduleNotification(title, startISO, minutes = 15) {
   const trigger = new Date(startISO);
-  trigger.setMinutes(trigger.getMinutes() - 15);
+  trigger.setMinutes(trigger.getMinutes() - minutes);
   if (trigger <= new Date()) return;
+  const bodyLabel = minutes === 0
+    ? `Teraz: ${title}`
+    : `Za ${minutes < 60 ? `${minutes} min` : `${minutes / 60}h`}: ${title}`;
   await Notifications.scheduleNotificationAsync({
-    content: { title: 'Przypomnienie – Calendary', body: `Za 15 min: ${title}`, sound: true },
+    content: { title: 'Przypomnienie – Calendary', body: bodyLabel, sound: true },
     trigger,
   });
 }
 
 async function registerPush(token) {
-  if (!Device.isDevice) return;
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== 'granted') return;
   try {
+    if (!Device.isDevice) return;
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') return;
     const d = await Notifications.getExpoPushTokenAsync();
     if (d?.data)
       await axios.post(`${API_URL}/auth/fcm-token`, { token: d.data }, { headers: { Authorization: `Bearer ${token}` } });
-  } catch (e) { console.log('push err:', e.message); }
+  } catch (e) { console.log('push (ignorowane w Expo Go):', e.message); }
 }
 
-const fmt = (d) => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+const fmt = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
 const formatDate = (iso) =>
   new Date(iso + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [token, setToken]     = useState(null);
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [eventsMap, setEventsMap] = useState({});
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   // auth
-  const [authTab, setAuthTab]     = useState('login');
-  const [email, setEmail]         = useState('');
-  const [pass, setPass]           = useState('');
-  const [confirmPass, setConf]    = useState('');
-  const [authLoading, setAL]      = useState(false);
+  const [authTab, setAuthTab] = useState('login');
+  const [email, setEmail] = useState('');
+  const [pass, setPass] = useState('');
+  const [confirmPass, setConf] = useState('');
+  const [authLoading, setAL] = useState(false);
 
   // modal
-  const [modal, setModal]         = useState(false);
-  const [title, setTitle]         = useState('');
-  const [desc, setDesc]           = useState('');
-  const [startTime, setStart]     = useState(new Date());
-  const [hasEnd, setHasEnd]       = useState(false);
-  const [endTime, setEnd]         = useState(new Date());
-  const [picker, setPicker]       = useState(false);
+  const [modal, setModal] = useState(false);
+  const [title, setTitle] = useState('');
+  const [desc, setDesc] = useState('');
+  const [startTime, setStart] = useState(new Date());
+  const [hasEnd, setHasEnd] = useState(false);
+  const [endTime, setEnd] = useState(new Date());
+  const [picker, setPicker] = useState(false);
   const [pickerFor, setPickerFor] = useState('start');
-  const [refresh, setRefresh]     = useState(0);
+  const [selectedColor, setSelectedColor] = useState(COLORS[0]);
+  const [refresh, setRefresh] = useState(0);
+
+  // ustawienia powiadomień
+  const [settingsModal, setSettingsModal] = useState(false);
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifMinutes, setNotifMinutes] = useState(15);
 
   useEffect(() => {
     (async () => {
       try { const t = await SecureStore.getItemAsync('calendary_token'); if (t) setToken(t); }
-      catch {}
+      catch { }
       finally { setLoading(false); }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const en = await SecureStore.getItemAsync('notif_enabled');
+        const min = await SecureStore.getItemAsync('notif_minutes');
+        if (en !== null) setNotifEnabled(en === 'true');
+        if (min !== null) setNotifMinutes(parseInt(min, 10));
+      } catch { }
     })();
   }, []);
 
@@ -131,8 +163,8 @@ export default function App() {
     (async () => {
       try {
         const today = new Date();
-        const from = new Date(today.getFullYear()-1, 0, 1).toISOString();
-        const to   = new Date(today.getFullYear()+1, 11, 31).toISOString();
+        const from = new Date(today.getFullYear() - 1, 0, 1).toISOString();
+        const to = new Date(today.getFullYear() + 1, 11, 31).toISOString();
         const { data } = await axios.get(`${API_URL}/events`, { params: { from, to }, headers: { Authorization: `Bearer ${token}` } });
         const map = {};
         data.events.forEach(ev => {
@@ -140,7 +172,7 @@ export default function App() {
           if (!map[day]) map[day] = [];
           map[day].push({ ...ev, _start: new Date(ev.start_date), _end: ev.end_date ? new Date(ev.end_date) : null });
         });
-        Object.keys(map).forEach(k => map[k].sort((a,b) => a._start - b._start));
+        Object.keys(map).forEach(k => map[k].sort((a, b) => a._start - b._start));
         setEventsMap(map);
       } catch (err) { if (err.response?.status === 401) handleLogout(); }
     })();
@@ -151,10 +183,13 @@ export default function App() {
     if (!email || !pass) return Alert.alert('Błąd', 'Uzupełnij wszystkie pola.');
     setAL(true);
     try {
-      const { data } = await axios.post(`${API_URL}/auth/login`, { email: email.trim(), password: pass });
+      const { data } = await axios.post(`${API_URL}/auth/login`, { email: email.trim(), password: pass }, { timeout: 10000 });
       await SecureStore.setItemAsync('calendary_token', data.token);
       setToken(data.token);
-    } catch (e) { Alert.alert('Błąd logowania', e.response?.data?.error || 'Brak połączenia.'); }
+    } catch (e) {
+      if (e.code === 'ECONNABORTED') Alert.alert('Błąd', 'Serwer nie odpowiada (timeout). Sprawdź połączenie.');
+      else Alert.alert('Błąd logowania', e.response?.data?.error || 'Brak połączenia z serwerem.');
+    }
     finally { setAL(false); }
   };
 
@@ -164,10 +199,13 @@ export default function App() {
     if (pass !== confirmPass) return Alert.alert('Błąd', 'Hasła nie są zgodne.');
     setAL(true);
     try {
-      const { data } = await axios.post(`${API_URL}/auth/register`, { email: email.trim(), password: pass });
+      const { data } = await axios.post(`${API_URL}/auth/register`, { email: email.trim(), password: pass }, { timeout: 10000 });
       await SecureStore.setItemAsync('calendary_token', data.token);
       setToken(data.token);
-    } catch (e) { Alert.alert('Błąd rejestracji', e.response?.data?.error || 'Brak połączenia.'); }
+    } catch (e) {
+      if (e.code === 'ECONNABORTED') Alert.alert('Błąd', 'Serwer nie odpowiada (timeout). Sprawdź połączenie.');
+      else Alert.alert('Błąd rejestracji', e.response?.data?.error || 'Brak połączenia z serwerem.');
+    }
     finally { setAL(false); }
   };
 
@@ -179,31 +217,33 @@ export default function App() {
   const handleAddEvent = async () => {
     if (!title.trim()) return Alert.alert('Błąd', 'Tytuł jest wymagany.');
     const parts = selectedDate.split('-');
-    const build = (t) => { const d = new Date(t); d.setFullYear(+parts[0], +parts[1]-1, +parts[2]); return d.toISOString(); };
+    const build = (t) => { const d = new Date(t); d.setFullYear(+parts[0], +parts[1] - 1, +parts[2]); return d.toISOString(); };
     const startISO = build(startTime);
-    const endISO   = hasEnd ? build(endTime) : null;
+    const endISO = hasEnd ? build(endTime) : null;
     try {
-      await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: C.accent }, { headers: { Authorization: `Bearer ${token}` } });
-      await scheduleNotification(title.trim(), startISO);
+      await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor }, { headers: { Authorization: `Bearer ${token}` } });
+      if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
       Alert.alert('Zapisano', 'Wydarzenie zostało dodane.');
-      setModal(false); setTitle(''); setDesc(''); setHasEnd(false);
-      setRefresh(p => p+1);
+      setModal(false); setTitle(''); setDesc(''); setHasEnd(false); setSelectedColor(COLORS[0]);
+      setRefresh(p => p + 1);
     } catch { Alert.alert('Błąd', 'Nie udało się zapisać.'); }
   };
 
   const handleDelete = (id, t) =>
     Alert.alert('Usuń', `Usunąć "${t}"?`, [
       { text: 'Anuluj', style: 'cancel' },
-      { text: 'Usuń', style: 'destructive', onPress: async () => {
-        try { await axios.delete(`${API_URL}/events/${id}`, { headers: { Authorization: `Bearer ${token}` } }); setRefresh(p => p+1); }
-        catch { Alert.alert('Błąd', 'Nie udało się usunąć.'); }
-      }},
+      {
+        text: 'Usuń', style: 'destructive', onPress: async () => {
+          try { await axios.delete(`${API_URL}/events/${id}`, { headers: { Authorization: `Bearer ${token}` } }); setRefresh(p => p + 1); }
+          catch { Alert.alert('Błąd', 'Nie udało się usunąć.'); }
+        }
+      },
     ]);
 
   const onTime = (e, v) => { setPicker(false); if (v) { if (pickerFor === 'start') setStart(v); else setEnd(v); } };
 
-  const markedDates = Object.keys(eventsMap).reduce((acc, d) => ({ ...acc, [d]: { marked: true, dotColor: C.accent } }), {});
-  markedDates[selectedDate] = { ...(markedDates[selectedDate]||{}), selected: true, selectedColor: C.accent };
+  const markedDates = Object.keys(eventsMap).reduce((acc, d) => ({ ...acc, [d]: { marked: true, dotColor: eventsMap[d][0]?.color || C.accent } }), {});
+  markedDates[selectedDate] = { ...(markedDates[selectedDate] || {}), selected: true, selectedColor: C.accent };
 
   const dayEvents = eventsMap[selectedDate] || [];
 
@@ -218,7 +258,7 @@ export default function App() {
   if (!token) return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={s.authScroll} keyboardShouldPersistTaps="handled">
 
           {/* Logo block */}
@@ -234,10 +274,10 @@ export default function App() {
 
           {/* Tabs */}
           <View style={s.tabs}>
-            {['login','register'].map(t => (
-              <TouchableOpacity key={t} style={[s.tab, authTab===t && s.tabActive]}
+            {['login', 'register'].map(t => (
+              <TouchableOpacity key={t} style={[s.tab, authTab === t && s.tabActive]}
                 onPress={() => { setAuthTab(t); setConf(''); }} activeOpacity={0.8}>
-                <Text style={[s.tabTxt, authTab===t && s.tabTxtActive]}>
+                <Text style={[s.tabTxt, authTab === t && s.tabTxtActive]}>
                   {t === 'login' ? 'Logowanie' : 'Rejestracja'}
                 </Text>
               </TouchableOpacity>
@@ -251,7 +291,7 @@ export default function App() {
               keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
 
             <Text style={s.fieldLbl}>HASŁO</Text>
-            <TextInput style={s.input} placeholder={authTab==='register' ? 'Minimum 8 znaków' : '••••••••'}
+            <TextInput style={s.input} placeholder={authTab === 'register' ? 'Minimum 8 znaków' : '••••••••'}
               placeholderTextColor={C.muted} secureTextEntry value={pass} onChangeText={setPass} />
 
             {authTab === 'register' && <>
@@ -283,11 +323,16 @@ export default function App() {
       <View style={s.header}>
         <View>
           <Text style={s.headerTitle}>Calendary</Text>
-          <Text style={s.headerSub}>{new Date().toLocaleDateString('pl-PL',{month:'long',year:'numeric'})}</Text>
+          <Text style={s.headerSub}>{new Date().toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' })}</Text>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={s.logoutBtn}>
-          <Text style={s.logoutTxt}>Wyloguj</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={() => setSettingsModal(true)} style={s.settingsBtn}>
+            <Text style={s.settingsTxt}>⚙️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout} style={s.logoutBtn}>
+            <Text style={s.logoutTxt}>Wyloguj</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Kalendarz */}
@@ -310,25 +355,25 @@ export default function App() {
         {dayEvents.length === 0
           ? <Text style={s.empty}>Brak wydarzeń w tym dniu</Text>
           : <FlatList
-              data={dayEvents}
-              keyExtractor={i => i.id.toString()}
-              contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
-              showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={s.eventCard}
-                  onPress={() => Alert.alert(item.title, `${item.description || 'Brak opisu'}\n\n${fmt(item._start)}${item._end ? ` – ${fmt(item._end)}` : ''}`)}
-                  onLongPress={() => handleDelete(item.id, item.title)}
-                  activeOpacity={0.75}
-                >
-                  <View style={s.eventStripe} />
-                  <View style={s.eventContent}>
-                    <Text style={s.eventTime}>{fmt(item._start)}{item._end ? ` – ${fmt(item._end)}` : ''}</Text>
-                    <Text style={s.eventTitle} numberOfLines={1}>{item.title}</Text>
-                    {item.description ? <Text style={s.eventDesc} numberOfLines={1}>{item.description}</Text> : null}
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
+            data={dayEvents}
+            keyExtractor={i => i.id.toString()}
+            contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={s.eventCard}
+                onPress={() => Alert.alert(item.title, `${item.description || 'Brak opisu'}\n\n${fmt(item._start)}${item._end ? ` – ${fmt(item._end)}` : ''}`)}
+                onLongPress={() => handleDelete(item.id, item.title)}
+                activeOpacity={0.75}
+              >
+                <View style={[s.eventStripe, { backgroundColor: item.color || C.accent }]} />
+                <View style={s.eventContent}>
+                  <Text style={s.eventTime}>{fmt(item._start)}{item._end ? ` – ${fmt(item._end)}` : ''}</Text>
+                  <Text style={s.eventTitle} numberOfLines={1}>{item.title}</Text>
+                  {item.description ? <Text style={s.eventDesc} numberOfLines={1}>{item.description}</Text> : null}
+                </View>
+              </TouchableOpacity>
+            )}
+          />
         }
       </View>
 
@@ -339,7 +384,7 @@ export default function App() {
 
       {/* ── Modal ── */}
       <Modal animationType="slide" transparent visible={modal} onRequestClose={() => setModal(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={s.sheetOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.sheetOverlay}>
           <View style={s.sheet}>
             <View style={s.sheetHandle} />
             <View style={s.sheetHeader}>
@@ -350,15 +395,29 @@ export default function App() {
             </View>
             <Text style={s.sheetSub}>{formatDate(selectedDate)}</Text>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ flex:1 }}>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
               <Text style={s.fieldLbl}>TYTUŁ</Text>
               <TextInput style={s.input} placeholder="Nazwa wydarzenia" placeholderTextColor={C.muted}
                 value={title} onChangeText={setTitle} />
 
               <Text style={s.fieldLbl}>NOTATKA (OPCJONALNIE)</Text>
-              <TextInput style={[s.input, { height:72, textAlignVertical:'top' }]}
+              <TextInput style={[s.input, { height: 72, textAlignVertical: 'top' }]}
                 placeholder="Szczegóły..." placeholderTextColor={C.muted} multiline
                 value={desc} onChangeText={setDesc} />
+
+              <Text style={s.fieldLbl}>KOLOR WYDARZENIA</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+                {COLORS.map(c => (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => setSelectedColor(c)}
+                    style={[
+                      { width: 34, height: 34, borderRadius: 17, backgroundColor: c },
+                      selectedColor === c && { borderWidth: 3, borderColor: '#fff' }
+                    ]}
+                  />
+                ))}
+              </View>
 
               <Text style={s.fieldLbl}>GODZINA ROZPOCZĘCIA</Text>
               <TouchableOpacity style={s.timeRow} onPress={() => { setPickerFor('start'); setPicker(true); }}>
@@ -394,6 +453,56 @@ export default function App() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* ── Settings Modal ── */}
+      <Modal animationType="slide" transparent visible={settingsModal} onRequestClose={() => setSettingsModal(false)}>
+        <View style={s.sheetOverlay}>
+          <View style={s.sheet}>
+            <View style={s.sheetHandle} />
+            <View style={s.sheetHeader}>
+              <Text style={s.sheetTitle}>Ustawienia powiadomień</Text>
+              <TouchableOpacity onPress={() => setSettingsModal(false)} style={s.closeBtn}>
+                <Text style={s.closeTxt}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={s.switchRow}>
+              <Text style={s.switchLbl}>Włącz powiadomienia</Text>
+              <Switch
+                value={notifEnabled}
+                onValueChange={async (v) => {
+                  setNotifEnabled(v);
+                  await SecureStore.setItemAsync('notif_enabled', String(v));
+                }}
+                trackColor={{ false: C.muted, true: C.accent }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {notifEnabled && (
+              <>
+                <Text style={[s.fieldLbl, { marginTop: 14, marginBottom: 10 }]}>CZAS PRZED WYDARZENIEM</Text>
+                {NOTIF_OPTIONS.map(opt => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[s.notifOption, notifMinutes === opt.value && s.notifOptionActive]}
+                    onPress={async () => {
+                      setNotifMinutes(opt.value);
+                      await SecureStore.setItemAsync('notif_minutes', String(opt.value));
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[s.notifOptionTxt, notifMinutes === opt.value && s.notifOptionTxtActive]}>
+                      {opt.label}
+                    </Text>
+                    {notifMinutes === opt.value && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {picker && (
         <DateTimePicker
           value={pickerFor === 'start' ? startTime : endTime}
@@ -406,146 +515,166 @@ export default function App() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  root: { flex:1, backgroundColor: C.bg, paddingTop: Platform.OS==='android' ? StatusBar.currentHeight : 0 },
-  center: { flex:1, justifyContent:'center', alignItems:'center', backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.bg, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg },
 
   // auth
-  authScroll: { flexGrow:1, justifyContent:'center', padding: 24 },
-  logoBlock:  { alignItems:'center', marginBottom: 40 },
+  authScroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  logoBlock: { alignItems: 'center', marginBottom: 40 },
   logoMark: {
     width: 52, height: 52, borderRadius: 14,
-    backgroundColor: C.accent, justifyContent:'center', alignItems:'center',
+    backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center',
     shadowColor: C.accent, shadowOpacity: 0.5, shadowRadius: 16, elevation: 6,
     marginBottom: 16,
   },
   logoMarkDot: { width: 24, height: 3, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 2 },
   logoTitle: { fontSize: 26, fontWeight: '800', color: C.text, letterSpacing: -0.5, marginBottom: 4 },
-  logoSub:   { fontSize: 13, color: C.sub },
+  logoSub: { fontSize: 13, color: C.sub },
 
   tabs: {
-    flexDirection:'row', backgroundColor:'rgba(0,0,0,0.3)',
+    flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.3)',
     borderRadius: 10, padding: 3, marginBottom: 20, gap: 3,
     borderWidth: 1, borderColor: C.border,
   },
-  tab:         { flex:1, paddingVertical: 10, borderRadius: 8, alignItems:'center' },
-  tabActive:   { backgroundColor: C.accent, shadowColor: C.accent, shadowOpacity: 0.35, shadowRadius: 8, elevation: 4 },
-  tabTxt:      { color: C.sub, fontWeight:'600', fontSize: 13 },
-  tabTxtActive:{ color:'#fff' },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  tabActive: { backgroundColor: C.accent, shadowColor: C.accent, shadowOpacity: 0.35, shadowRadius: 8, elevation: 4 },
+  tabTxt: { color: C.sub, fontWeight: '600', fontSize: 13 },
+  tabTxtActive: { color: '#fff' },
 
   authCard: {
     backgroundColor: C.card, borderRadius: 14,
     padding: 20, borderWidth: 1, borderColor: C.border,
   },
-  fieldLbl: { color: C.muted, fontSize: 10, fontWeight:'700', letterSpacing: 1.2, marginBottom: 6, marginTop: 2 },
+  fieldLbl: { color: C.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginBottom: 6, marginTop: 2 },
   input: {
-    backgroundColor:'rgba(255,255,255,0.04)', borderWidth:1, borderColor: C.border,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: C.border,
     borderRadius: 9, color: C.text, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 14, marginBottom: 14,
   },
   submitBtn: {
     backgroundColor: C.accent, borderRadius: 10, paddingVertical: 14,
-    alignItems:'center', marginTop: 4,
+    alignItems: 'center', marginTop: 4,
     shadowColor: C.accent, shadowOpacity: 0.35, shadowRadius: 10, elevation: 4,
   },
-  submitTxt: { color:'#fff', fontWeight:'700', fontSize: 15 },
+  submitTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   // header
   header: {
-    flexDirection:'row', justifyContent:'space-between', alignItems:'center',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 18, paddingVertical: 12,
     backgroundColor: C.surface,
     borderBottomWidth: 1, borderBottomColor: C.border,
   },
-  headerTitle: { color: C.text, fontSize: 17, fontWeight:'700' },
-  headerSub:   { color: C.sub, fontSize: 12, marginTop: 1, textTransform:'capitalize' },
+  headerTitle: { color: C.text, fontSize: 17, fontWeight: '700' },
+  headerSub: { color: C.sub, fontSize: 12, marginTop: 1, textTransform: 'capitalize' },
   logoutBtn: {
     paddingHorizontal: 12, paddingVertical: 7,
     borderRadius: 8, borderWidth: 1, borderColor: C.border,
-    backgroundColor:'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
-  logoutTxt: { color: C.sub, fontSize: 12, fontWeight:'600' },
+  logoutTxt: { color: C.sub, fontSize: 12, fontWeight: '600' },
 
   // calendar
   cal: { borderBottomWidth: 1, borderBottomColor: C.border },
 
   // list
-  listWrap: { flex:1, backgroundColor: C.bg },
+  listWrap: { flex: 1, backgroundColor: C.bg },
   listHeader: {
-    flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 11,
     backgroundColor: C.surface,
     borderBottomWidth: 1, borderBottomColor: C.border,
   },
-  listDateTxt: { color: C.sub, fontSize: 12, fontWeight:'600', textTransform:'capitalize', flex: 1 },
+  listDateTxt: { color: C.sub, fontSize: 12, fontWeight: '600', textTransform: 'capitalize', flex: 1 },
   badge: {
     backgroundColor: C.accentDim, borderRadius: 20,
-    minWidth: 26, height: 26, alignItems:'center', justifyContent:'center', paddingHorizontal: 8,
+    minWidth: 26, height: 26, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8,
   },
-  badgeTxt: { color: C.accent, fontWeight:'700', fontSize: 12 },
-  empty: { textAlign:'center', color: C.muted, fontSize: 13, marginTop: 32 },
+  badgeTxt: { color: C.accent, fontWeight: '700', fontSize: 12 },
+  empty: { textAlign: 'center', color: C.muted, fontSize: 13, marginTop: 32 },
 
   eventCard: {
-    flexDirection:'row', backgroundColor: C.card, borderRadius: 10,
-    marginBottom: 8, borderWidth: 1, borderColor: C.border, overflow:'hidden',
+    flexDirection: 'row', backgroundColor: C.card, borderRadius: 10,
+    marginBottom: 8, borderWidth: 1, borderColor: C.border, overflow: 'hidden',
   },
   eventStripe: { width: 3, backgroundColor: C.accent },
-  eventContent: { flex:1, padding: 12 },
-  eventTime:    { color: C.sub, fontSize: 11, fontWeight:'600', marginBottom: 3 },
-  eventTitle:   { color: C.text, fontSize: 14, fontWeight:'600' },
-  eventDesc:    { color: C.muted, fontSize: 12, marginTop: 3 },
+  eventContent: { flex: 1, padding: 12 },
+  eventTime: { color: C.sub, fontSize: 11, fontWeight: '600', marginBottom: 3 },
+  eventTitle: { color: C.text, fontSize: 14, fontWeight: '600' },
+  eventDesc: { color: C.muted, fontSize: 12, marginTop: 3 },
 
   // FAB
   fab: {
-    position:'absolute', right:18, bottom:22,
+    position: 'absolute', right: 18, bottom: 22,
     width: 54, height: 54, borderRadius: 27,
-    backgroundColor: C.accent, justifyContent:'center', alignItems:'center',
+    backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center',
     shadowColor: C.accent, shadowOpacity: 0.45, shadowRadius: 12, elevation: 8,
   },
-  fabTxt: { fontSize: 26, color:'#fff', fontWeight:'300', lineHeight: 30 },
+  fabTxt: { fontSize: 26, color: '#fff', fontWeight: '300', lineHeight: 30 },
 
   // sheet
-  sheetOverlay: { flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' },
+  sheetOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
   sheet: {
     backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: Platform.OS==='ios' ? 36 : 20,
-    borderTopWidth: 1, borderColor:'rgba(99,102,241,0.2)',
-    maxHeight:'88%',
+    padding: 20, paddingBottom: Platform.OS === 'ios' ? 36 : 20,
+    borderTopWidth: 1, borderColor: 'rgba(99,102,241,0.2)',
+    maxHeight: '88%',
   },
-  sheetHandle: { width:36, height:4, backgroundColor:'rgba(255,255,255,0.12)', borderRadius:2, alignSelf:'center', marginBottom:16 },
-  sheetHeader: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom: 4 },
-  sheetTitle:  { color: C.text, fontSize: 16, fontWeight:'700' },
-  sheetSub:    { color: C.sub, fontSize: 12, marginBottom: 18, textTransform:'capitalize' },
-  closeBtn:    { width: 28, height: 28, borderRadius: 14, backgroundColor:'rgba(255,255,255,0.06)', alignItems:'center', justifyContent:'center' },
-  closeTxt:    { color: C.sub, fontSize: 13 },
+  sheetHandle: { width: 36, height: 4, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  sheetTitle: { color: C.text, fontSize: 16, fontWeight: '700' },
+  sheetSub: { color: C.sub, fontSize: 12, marginBottom: 18, textTransform: 'capitalize' },
+  closeBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+  closeTxt: { color: C.sub, fontSize: 13 },
 
   timeRow: {
-    flexDirection:'row', justifyContent:'space-between', alignItems:'center',
-    backgroundColor:'rgba(255,255,255,0.03)', borderRadius: 9,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 9,
     paddingHorizontal: 14, paddingVertical: 13,
     marginBottom: 12, borderWidth: 1, borderColor: C.border,
   },
   timeRowLabel: { color: C.sub, fontSize: 13 },
-  timeRowValue: { color: C.accent, fontSize: 17, fontWeight:'700' },
+  timeRowValue: { color: C.accent, fontSize: 17, fontWeight: '700' },
 
   switchRow: {
-    flexDirection:'row', justifyContent:'space-between', alignItems:'center',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 14, paddingVertical: 12,
-    backgroundColor:'rgba(255,255,255,0.02)', borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 9,
     marginBottom: 12, borderWidth: 1, borderColor: C.border,
   },
   switchLbl: { color: C.sub, fontSize: 13 },
 
-  sheetBtns: { flexDirection:'row', gap:10, marginTop: 12 },
+  sheetBtns: { flexDirection: 'row', gap: 10, marginTop: 12 },
   cancelBtn: {
-    flex:1, paddingVertical: 13, borderRadius: 10,
-    alignItems:'center', borderWidth: 1, borderColor: C.border,
-    backgroundColor:'rgba(255,255,255,0.03)',
+    flex: 1, paddingVertical: 13, borderRadius: 10,
+    alignItems: 'center', borderWidth: 1, borderColor: C.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
-  cancelTxt: { color: C.sub, fontWeight:'600', fontSize: 14 },
+  cancelTxt: { color: C.sub, fontWeight: '600', fontSize: 14 },
   saveBtn: {
-    flex:2, paddingVertical: 13, borderRadius: 10,
-    alignItems:'center', backgroundColor: C.accent,
+    flex: 2, paddingVertical: 13, borderRadius: 10,
+    alignItems: 'center', backgroundColor: C.accent,
     shadowColor: C.accent, shadowOpacity: 0.35, shadowRadius: 8, elevation: 4,
   },
-  saveTxt: { color:'#fff', fontWeight:'700', fontSize: 14 },
+  saveTxt: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  // settings
+  settingsBtn: {
+    paddingHorizontal: 10, paddingVertical: 7,
+    borderRadius: 8, borderWidth: 1, borderColor: C.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  settingsTxt: { fontSize: 15 },
+
+  notifOption: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 9,
+    marginBottom: 8, borderWidth: 1, borderColor: C.border,
+  },
+  notifOptionActive: {
+    borderColor: C.accent, backgroundColor: C.accentDim,
+  },
+  notifOptionTxt: { color: C.sub, fontSize: 13 },
+  notifOptionTxtActive: { color: C.accent, fontWeight: '600' },
 });

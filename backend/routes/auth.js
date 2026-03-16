@@ -41,7 +41,7 @@ pool.connect()
     .catch(err => console.error('[DB] Błąd połączenia z PostgreSQL:', err.message));
 
 // ── Stałe konfiguracyjne ─────────────────────────────────────────────────────
-const SALT_ROUNDS = 12;          // bcrypt – produkcyjny standard
+const SALT_ROUNDS = 10;          // bcrypt – standardowe 10 rund (bezpieczne, ~4x szybsze niż 12)
 const JWT_EXPIRES = '7d';        // ważność tokenu Bearer
 
 // ── Helpery ──────────────────────────────────────────────────────────────────

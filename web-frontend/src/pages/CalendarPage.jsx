@@ -6,43 +6,78 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import plLocale from '@fullcalendar/core/locales/pl';
-import api from '../api';
+import api, { clearSession } from '../api';
 import EventModal from '../components/EventModal';
 import './CalendarPage.css';
+
+const getUser = () => {
+    try {
+        return JSON.parse(
+            localStorage.getItem('calendary_user') ||
+            sessionStorage.getItem('calendary_user') || '{}'
+        );
+    } catch { return {}; }
+};
+
+// ── SVG Icons ─────────────────────────────────────────────────────────────
+const IconCalendar = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="3"/>
+        <path d="M16 2v4M8 2v4M3 10h18"/>
+    </svg>
+);
+const IconWeek = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+);
+const IconDay = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="3"/>
+        <path d="M3 10h18M8 2v4M16 2v4M8 14h.01M12 14h.01M16 14h.01"/>
+    </svg>
+);
+const IconPlus = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+);
+const IconPower = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><line x1="12" y1="2" x2="12" y2="12"/>
+    </svg>
+);
 
 export default function CalendarPage() {
     const navigate = useNavigate();
     const calendarRef = useRef(null);
     const [events, setEvents] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
-    const [editEvent, setEditEvent] = useState(null);  // null = nowe, obj = edycja
+    const [editEvent, setEditEvent] = useState(null);
     const [view, setView] = useState('dayGridMonth');
     const [loading, setLoading] = useState(true);
+    const user = getUser();
 
-    const user = JSON.parse(localStorage.getItem('calendary_user') || '{}');
-
-    // ── Pobierz wydarzenia z API ───────────────────────────────────────────────
     const fetchEvents = useCallback(async () => {
         setLoading(true);
         try {
             const { data } = await api.get('/events');
-            // Mapujemy na format FullCalendar
             const fcEvents = data.events.map((e) => ({
                 id: String(e.id),
                 title: e.title,
                 start: e.start_date,
                 end: e.end_date,
-                backgroundColor: e.color || '#7c5cfc',
+                backgroundColor: '#6366f1',
+                borderColor: '#6366f1',
                 extendedProps: {
                     description: e.description,
-                    notified: e.notified,
                     start_date: e.start_date,
                     end_date: e.end_date,
                 },
             }));
             setEvents(fcEvents);
         } catch {
-            // 401 obsługuje interceptor w api.js
+            // 401 obsługuje interceptor
         } finally {
             setLoading(false);
         }
@@ -50,19 +85,16 @@ export default function CalendarPage() {
 
     useEffect(() => { fetchEvents(); }, [fetchEvents]);
 
-    // ── Zmiana widoku kalendarza ───────────────────────────────────────────────
     const switchView = (v) => {
         setView(v);
         calendarRef.current?.getApi().changeView(v);
     };
 
-    // ── Klik w pusty slot → otwórz modal z wypełnionymi datami ───────────────
     const handleDateSelect = ({ start, end }) => {
         setEditEvent({ start: start.toISOString(), end: end.toISOString() });
         setModalOpen(true);
     };
 
-    // ── Klik w istniejące wydarzenie → otwórz modal edycji ───────────────────
     const handleEventClick = ({ event }) => {
         setEditEvent({
             id: event.id,
@@ -70,12 +102,10 @@ export default function CalendarPage() {
             description: event.extendedProps.description,
             start_date: event.extendedProps.start_date,
             end_date: event.extendedProps.end_date,
-            color: event.backgroundColor,
         });
         setModalOpen(true);
     };
 
-    // ── Drag & drop – przesuń wydarzenie ────────────────────────────────────
     const handleEventDrop = async ({ event }) => {
         try {
             await api.put(`/events/${event.id}`, {
@@ -83,157 +113,132 @@ export default function CalendarPage() {
                 end_date: (event.end || event.start).toISOString(),
             });
             fetchEvents();
-        } catch {
-            fetchEvents(); // revert na błąd
-        }
+        } catch { fetchEvents(); }
     };
 
-    // ── Zapis nowego lub zaktualizowanego wydarzenia ───────────────────────────
     const handleSave = async (formData) => {
-        if (editEvent?.id) {
-            await api.put(`/events/${editEvent.id}`, formData);
-        } else {
-            await api.post('/events', formData);
-        }
+        if (editEvent?.id) await api.put(`/events/${editEvent.id}`, formData);
+        else await api.post('/events', formData);
         await fetchEvents();
     };
 
-    // ── Usuwanie ──────────────────────────────────────────────────────────────
     const handleDelete = async (id) => {
         await api.delete(`/events/${id}`);
         await fetchEvents();
     };
 
     const handleLogout = () => {
-        localStorage.removeItem('calendary_token');
-        localStorage.removeItem('calendary_user');
+        clearSession();
         navigate('/login');
     };
 
-    const todayEvents = events.filter((e) => {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-        const s = new Date(e.start);
-        return s >= today && s < tomorrow;
-    });
-
-    const upcomingCount = events.filter((e) => new Date(e.start) >= new Date()).length;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayCount = events.filter(e => { const s = new Date(e.start); return s >= today && s < tomorrow; }).length;
+    const upcomingCount = events.filter(e => new Date(e.start) >= new Date()).length;
     const initial = (user.email || '?')[0].toUpperCase();
 
     return (
         <div className="app-layout">
-            {/* ── Sidebar ───────────────────────────────────────────────────────── */}
+            {/* ── Sidebar ── */}
             <aside className="sidebar">
                 <div className="sidebar-logo">
-                    <span className="sidebar-logo-icon">📅</span>
+                    <div className="sidebar-logo-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="3"/>
+                            <path d="M16 2v4M8 2v4M3 10h18"/>
+                        </svg>
+                    </div>
                     <span className="sidebar-logo-text">Calendary</span>
                 </div>
 
-                <span className="sidebar-section-label">Widok</span>
-                <button
-                    className={`sidebar-item ${view === 'dayGridMonth' ? 'active' : ''}`}
-                    onClick={() => switchView('dayGridMonth')}
-                >
-                    <span className="sidebar-item-icon">🗓</span> Miesiąc
-                </button>
-                <button
-                    className={`sidebar-item ${view === 'timeGridWeek' ? 'active' : ''}`}
-                    onClick={() => switchView('timeGridWeek')}
-                >
-                    <span className="sidebar-item-icon">📆</span> Tydzień
-                </button>
-                <button
-                    className={`sidebar-item ${view === 'timeGridDay' ? 'active' : ''}`}
-                    onClick={() => switchView('timeGridDay')}
-                >
-                    <span className="sidebar-item-icon">📋</span> Dzień
-                </button>
+                <div className="sidebar-section">
+                    <span className="sidebar-section-label">Widok</span>
+                    <button className={`sidebar-nav-item ${view === 'dayGridMonth' ? 'active' : ''}`} onClick={() => switchView('dayGridMonth')}>
+                        <IconCalendar /> Miesiąc
+                    </button>
+                    <button className={`sidebar-nav-item ${view === 'timeGridWeek' ? 'active' : ''}`} onClick={() => switchView('timeGridWeek')}>
+                        <IconWeek /> Tydzień
+                    </button>
+                    <button className={`sidebar-nav-item ${view === 'timeGridDay' ? 'active' : ''}`} onClick={() => switchView('timeGridDay')}>
+                        <IconDay /> Dzień
+                    </button>
+                </div>
 
-                <span className="sidebar-section-label">Akcje</span>
-                <button
-                    id="btn-new-event"
-                    className="sidebar-item"
-                    onClick={() => { setEditEvent(null); setModalOpen(true); }}
-                >
-                    <span className="sidebar-item-icon">➕</span> Nowe wydarzenie
-                </button>
+                <div className="sidebar-section">
+                    <span className="sidebar-section-label">Akcje</span>
+                    <button id="btn-new-event" className="sidebar-nav-item" onClick={() => { setEditEvent(null); setModalOpen(true); }}>
+                        <IconPlus /> Nowe wydarzenie
+                    </button>
+                </div>
 
                 <div className="sidebar-spacer" />
 
-                <div className="sidebar-user">
-                    <div className="sidebar-avatar">{initial}</div>
-                    <div className="sidebar-user-info">
-                        <div className="sidebar-user-email">{user.email}</div>
+                <div className="sidebar-bottom">
+                    <div className="sidebar-user">
+                        <div className="sidebar-avatar">{initial}</div>
+                        <span className="sidebar-user-email">{user.email}</span>
+                        <button className="sidebar-logout" onClick={handleLogout} title="Wyloguj się">
+                            <IconPower />
+                        </button>
                     </div>
-                    <button className="sidebar-logout" onClick={handleLogout} title="Wyloguj się">⏻</button>
                 </div>
             </aside>
 
-            {/* ── Main ──────────────────────────────────────────────────────────── */}
+            {/* ── Main ── */}
             <div className="main-content">
-                {/* Topbar */}
+                {loading && <div className="loading-bar" />}
+
                 <div className="topbar">
-                    <div>
-                        <div className="topbar-title">Twój Kalendarz</div>
+                    <div className="topbar-left">
+                        <div className="topbar-title">Twój kalendarz</div>
                         <div className="topbar-subtitle">
                             {new Date().toLocaleDateString('pl-PL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                         </div>
                     </div>
-                    <button
-                        id="btn-add-event-topbar"
-                        className="btn btn-primary"
-                        style={{ gap: 6 }}
-                        onClick={() => { setEditEvent(null); setModalOpen(true); }}
-                    >
-                        ➕ Dodaj wydarzenie
-                    </button>
+                    <div className="topbar-right">
+                        <button id="btn-add-event-topbar" className="btn btn-primary btn-sm" onClick={() => { setEditEvent(null); setModalOpen(true); }}>
+                            <IconPlus /> Dodaj wydarzenie
+                        </button>
+                    </div>
                 </div>
 
-                {/* Stats */}
-                <div className="stats-bar">
-                    <div className="stat-chip stat-chip-accent">
-                        <span>📅</span>
-                        <span>Dzisiaj: <span className="stat-chip-value">{todayEvents.length}</span></span>
+                <div className="stats-strip">
+                    <div className="stat-item accent">
+                        <span className="stat-label">Dzisiaj</span>
+                        <span className="stat-value">{todayCount}</span>
                     </div>
-                    <div className="stat-chip">
-                        <span>🔮</span>
-                        <span>Nadchodzące: <span className="stat-chip-value">{upcomingCount}</span></span>
+                    <div className="stat-item">
+                        <span className="stat-label">Nadchodzące</span>
+                        <span className="stat-value">{upcomingCount}</span>
                     </div>
-                    <div className="stat-chip">
-                        <span>📊</span>
-                        <span>Łącznie: <span className="stat-chip-value">{events.length}</span></span>
+                    <div className="stat-item">
+                        <span className="stat-label">Łącznie</span>
+                        <span className="stat-value">{events.length}</span>
                     </div>
-                    {loading && <div className="stat-chip"><span className="spinner" style={{ width: 14, height: 14 }} /></div>}
                 </div>
 
-                {/* Calendar */}
                 <div className="calendar-wrapper">
                     <FullCalendar
                         ref={calendarRef}
                         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
                         initialView={view}
                         locale={plLocale}
-                        headerToolbar={{
-                            left: 'prev,next today',
-                            center: 'title',
-                            right: '',
-                        }}
+                        headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
                         events={events}
                         selectable
                         selectMirror
                         editable
-                        dayMaxEvents={3}
+                        dayMaxEvents={4}
                         select={handleDateSelect}
                         eventClick={handleEventClick}
                         eventDrop={handleEventDrop}
-                        eventResizableFromStart
                         height="100%"
                         nowIndicator
                     />
                 </div>
             </div>
 
-            {/* ── Modal ─────────────────────────────────────────────────────────── */}
             {modalOpen && (
                 <EventModal
                     event={editEvent}

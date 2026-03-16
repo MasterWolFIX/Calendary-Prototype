@@ -3,61 +3,62 @@
 ## 1. ARCHITEKTURA SYSTEMU
 System składa się z trzech głównych modułów zarządzanych w jednym repozytorium:
 - **Backend:** API RESTful (Node.js + Express) komunikujące się z bazą PostgreSQL.
-- **Web Frontend:** Aplikacja React (zarządzanie kalendarzem przez przeglądarkę).
-- **Mobile App:** Aplikacja Android (Flutter) z powiadomieniami push.
-- **Infrastruktura:** Serwer z dostępem przez Cloudflare Tunnel (HTTPS).
+- **Web Frontend:** Aplikacja w React i Vite (zarządzanie kalendarzem przez przeglądarkę).
+- **Mobile App:** Aplikacja Android/iOS (React Native / Expo) z powiadomieniami lokalnymi i push.
+- **Infrastruktura:** Serwer udostępniany przez tunel Cloudflare (`cloudflared`) dla bezpiecznego dostępu zewnętrznego.
 
 ## 2. STACK TECHNOLOGICZNY (STRICT)
-- **Backend:** Node.js, Express, `pg` (PostgreSQL client), `bcrypt` (hashowanie), `jsonwebtoken` (JWT), `node-cron` (powiadomienia).
+- **Backend:** Node.js, Express, `pg` (PostgreSQL client), `bcrypt` (hashowanie hasła), `jsonwebtoken` (JWT dla sesji).
+- **Web Frontend:** React (Vite), React Router, `@fullcalendar/react`, Axios.
+- **Mobile App:** React Native z frameworkiem Expo, `expo-secure-store` (przechowywanie sesji), `react-native-calendars`, `expo-notifications`.
 - **Baza Danych:** PostgreSQL (relacyjna).
-- **Komunikacja:** JSON REST API.
-- **Autentykacja:** Bearer Token (JWT).
-- **Powiadomienia:** Firebase Cloud Messaging (FCM).
+- **Komunikacja:** JSON REST API (wspierające cross-origin dla urządzeń mobilnych/przeglądarek).
+- **Estetyka Interfejsu:** Nowoczesny design "Indigo" oparty na głębokiej czerni (`#07090F`), wyraźnych akcentach (`#6366f1`) oraz pełnej wektoryzacji SVG (kategoryczny zakaz stosowania ikon Emoji).
 
-## 3. STRUKTURA BAZY DANYCH (SQL)
+## 3. STRUKTURA BAZY DANYCH
+Baza danych korzysta ze specjalnych typów obsługujących strefy czasowe (Timezones), aby zapewnić precyzję planowanych zadań.
+
 ### Tabela: users
 - `id`: SERIAL PRIMARY KEY
 - `email`: VARCHAR(255) UNIQUE NOT NULL
 - `password_hash`: TEXT NOT NULL
-- `fcm_token`: TEXT (token do powiadomień push na Androida)
+- `fcm_token`: TEXT (token do powiadomień na urządzeniach mobilnych)
 - `created_at`: TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
 ### Tabela: events
 - `id`: SERIAL PRIMARY KEY
-- `user_id`: INTEGER REFERENCES users(id)
+- `user_id`: INTEGER REFERENCES users(id) ON DELETE CASCADE
 - `title`: VARCHAR(255) NOT NULL
 - `description`: TEXT
-- `start_date`: TIMESTAMP NOT NULL
-- `end_date`: TIMESTAMP NOT NULL
-- `notified`: BOOLEAN DEFAULT FALSE (status wysłania przypomnienia)
+- `start_date`: TIMESTAMPTZ NOT NULL (Wsparcie stref czasowych)
+- `end_date`: TIMESTAMPTZ (Opcjonalny)
+- `color`: VARCHAR(50) (Domyślnie używany spójny kolor akcentowy aplikacji)
+- `notified`: BOOLEAN DEFAULT FALSE (status powiadomienia po stronie API)
 
 ## 4. WYMAGANIA FUNKCJONALNE
 
 ### Moduł Backend (API)
-1. **Endpointy Auth:** `POST /api/auth/register` oraz `POST /api/auth/login`.
-2. **Endpointy Calendar:** `GET /api/events` (filtry po dacie), `POST /api/events`, `PUT /api/events/:id`, `DELETE /api/events/:id`.
-3. **Middleware:** Weryfikacja JWT dla wszystkich tras poza logowaniem/rejestracją.
-4. **Notification Engine:** Skrypt cron sprawdzający co 15 minut nadchodzące wydarzenia (na następne 24h) i wysyłający push przez Firebase do użytkowników, którzy jeszcze nie dostali powiadomienia (`notified = false`).
+1. **Endpointy Auth:** Logowanie (`POST /auth/login`), Rejestracja (`POST /auth/register`) z wymogiem `confirmPassword` obsługiwanym na froncie oraz powtarzania hasła.
+2. **Endpointy Calendar:** Pobieranie wydarzeń (`GET /events`), dodawanie (`POST /events`), usuwanie dają swobodny dostęp i formatowanie stref czasowych (UTC -> Lokalny).
+3. **Zarządzanie Czasem Zakończenia:** Obsługa scenariuszy bez godziny zakończenia (wtedy `end_date` ma wartość `NULL`).
+4. **Middleware:** Weryfikacja tokena JWT i zabezpieczenie 401 z automatycznym wylogowaniem sesji na froncie.
 
 ### Moduł Web (React)
-1. Integracja z biblioteką `FullCalendar`.
-2. Widok miesięczny i tygodniowy.
-3. Formularz dodawania wydarzenia w oknie Modal.
-4. Synchronizacja stanu z API po każdej zmianie.
+1. **Uwierzytelnianie:** Funkcja "Zapamiętaj mnie na tym urządzeniu" (przechowująca JWT i sesję w `localStorage` lub `sessionStorage`).
+2. **Design:** Odświeżony Layout. Sidebar z wektorowymi narzędziami ikon (SVG) oraz statystykami dziennymi na górnym pasku.
+3. **Wydarzenia:** Pełna obsługa Drag&Drop w module modułu pełnego widoku `FullCalendar`. Checkbox `Czas zakończenia` domyślnie wyłączony.
 
-### Moduł Mobile (Android - Flutter)
-1. Logowanie i przechowywanie tokena w `SecureStorage`.
-2. Wyświetlanie listy wydarzeń w formie "Agendy".
-3. Background Service do obsługi powiadomień Firebase.
-4. Powiadomienie lokalne typu: "Masz jutro wydarzenie: [Tytuł] o godzinie [HH:MM]".
+### Moduł Mobile (React Native / Expo)
+1. **Powiadomienia Lokalne:** Aplikacja z wyprzedzeniem czasowym zaplanuje zawiadomienie systemowe dokładnie 15 minut przed wydarzeniem (za pomocą paczki `expo-notifications`).
+2. **Interfejs Użytkownika:** Minimalistyczny interfejs z ciemnym motywem oraz Modal typu "Bottom Sheet" do wprowadzania nowych eventów.
+3. **OTA Updates:** Kod jest budowany tak, by w przyszłości obsłużyć Expo EAS Updates i wysyłać poprawki bez konieczności reinstalacji pliku `.apk`.
 
 ## 5. WYMAGANIA INFRASTRUKTURALNE
-- **Bezpieczeństwo:** Hasła muszą być solone i hashowane przez `bcrypt`.
-- **Dostępność:** API musi działać na porcie 3000 i być wystawione przez Cloudflare Tunnel z certyfikatem SSL.
-- **Zmienne środowiskowe:** Wszystkie klucze (DB_URL, JWT_SECRET, FCM_KEY) muszą być w pliku `.env`.
+- Hasła w bazie danych są hashowane paczką `bcrypt`.
+- Bezpieczeństwo zAPY za pomocą nagłówka `Authorization: Bearer <token>`.
+- Brak lokalnych hard-coded IP do backendu u klienta mobilnego podczas dystrybucji docelowej. Łączność kierowana głównie przez Cloudflare (np. `trycloudflare.com`).
 
 ## 6. STRUKTURA REPOZYTORIUM
-/backend
-/web-frontend
-/mobile-app
-/docs
+- `/backend` - kod serwerowy Node.js + pliki konfiguracyjne SQL.
+- `/web-frontend` - Panel internetowy dla przeglądarki (Vite).
+- `/mobile-app` - Aplikacja kliencka przeznaczona do kompilacji Expo (EAS Build).

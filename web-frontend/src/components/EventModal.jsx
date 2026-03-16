@@ -1,27 +1,46 @@
 // src/components/EventModal.jsx
 import { useState, useEffect } from 'react';
 
-const EVENT_COLORS = [
-    '#7c5cfc', '#06b6d4', '#f59e0b', '#34d399',
-    '#f87171', '#fb7185', '#a78bfa', '#38bdf8',
-];
+const DEFAULT_COLOR = '#6366f1';
 
 function toLocalDatetimeValue(isoString) {
     if (!isoString) return '';
     const d = new Date(isoString);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+// SVG Icons
+const IconEdit = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+);
+const IconPlus = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+);
+const IconClose = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+);
+const IconTrash = () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
+    </svg>
+);
 
 export default function EventModal({ event, onClose, onSave, onDelete }) {
     const isEditing = Boolean(event?.id);
-
     const [title, setTitle] = useState('');
     const [desc, setDesc] = useState('');
     const [start, setStart] = useState('');
     const [end, setEnd] = useState('');
-    const [hasEnd, setHasEnd] = useState(true);
-    const [color, setColor] = useState(EVENT_COLORS[0]);
+    const [hasEnd, setHasEnd] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -30,14 +49,12 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
             setTitle(event.title || '');
             setDesc(event.description || '');
             setStart(toLocalDatetimeValue(event.start || event.start_date));
-            if (event.end || event.end_date) {
+            if (event.end_date && event.end_date !== event.start_date) {
                 setEnd(toLocalDatetimeValue(event.end || event.end_date));
                 setHasEnd(true);
             } else {
-                setEnd('');
-                setHasEnd(false);
+                setEnd(''); setHasEnd(false);
             }
-            setColor(event.color || EVENT_COLORS[0]);
         }
     }, [event]);
 
@@ -45,41 +62,48 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
         e.preventDefault();
         setError('');
         if (!title.trim()) { setError('Tytuł jest wymagany.'); return; }
-        if (!start) { setError('Data początku jest wymagana.'); return; }
-        if (hasEnd && !end) { setError('Data końca jest wymagana, jeśli zaznaczono opcję.'); return; }
-        if (hasEnd && new Date(start) >= new Date(end)) { setError('Data końca musi być późniejsza niż data początku.'); return; }
-
+        if (!start) { setError('Data i godzina są wymagane.'); return; }
+        if (hasEnd && !end) { setError('Podaj czas zakończenia.'); return; }
+        if (hasEnd && new Date(start) >= new Date(end)) {
+            setError('Czas zakończenia musi być późniejszy niż rozpoczęcia.'); return;
+        }
         setLoading(true);
         try {
-            const finalEnd = hasEnd ? new Date(end).toISOString() : null;
-            await onSave({ title, description: desc, start_date: new Date(start).toISOString(), end_date: finalEnd, color });
+            await onSave({
+                title, description: desc,
+                start_date: new Date(start).toISOString(),
+                end_date: hasEnd ? new Date(end).toISOString() : null,
+                color: DEFAULT_COLOR,
+            });
             onClose();
         } catch (err) {
             setError(err.response?.data?.error || 'Błąd zapisu.');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     };
 
     const handleDelete = async () => {
-        if (!window.confirm('Czy na pewno chcesz usunąć to wydarzenie?')) return;
+        if (!window.confirm('Usunąć to wydarzenie?')) return;
         setLoading(true);
-        try {
-            await onDelete(event.id);
-            onClose();
-        } catch (err) {
-            setError('Błąd usuwania.');
-        } finally {
-            setLoading(false);
-        }
+        try { await onDelete(event.id); onClose(); }
+        catch { setError('Błąd usuwania.'); }
+        finally { setLoading(false); }
     };
 
     return (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
             <div className="modal">
                 <div className="modal-header">
-                    <span className="modal-title">{isEditing ? '✏️ Edytuj wydarzenie' : '➕ Nowe wydarzenie'}</span>
-                    <button className="modal-close" onClick={onClose} aria-label="Zamknij">✕</button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ color: 'var(--accent)' }}>
+                            {isEditing ? <IconEdit /> : <IconPlus />}
+                        </div>
+                        <span className="modal-title">
+                            {isEditing ? 'Edytuj wydarzenie' : 'Nowe wydarzenie'}
+                        </span>
+                    </div>
+                    <button className="modal-close" onClick={onClose} aria-label="Zamknij">
+                        <IconClose />
+                    </button>
                 </div>
 
                 <form onSubmit={handleSave}>
@@ -87,108 +111,44 @@ export default function EventModal({ event, onClose, onSave, onDelete }) {
                         {error && <div className="alert alert-error">{error}</div>}
 
                         <div className="form-group">
-                            <label className="form-label" htmlFor="ev-title">Tytuł *</label>
-                            <input
-                                id="ev-title"
-                                className="form-input"
-                                type="text"
-                                placeholder="np. Spotkanie z klientem"
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                required
-                                autoFocus
-                            />
+                            <label className="form-label" htmlFor="ev-title">Tytuł</label>
+                            <input id="ev-title" className="form-input" type="text"
+                                placeholder="Nazwa wydarzenia" value={title}
+                                onChange={(e) => setTitle(e.target.value)} required autoFocus />
                         </div>
 
                         <div className="form-group">
-                            <label className="form-label" htmlFor="ev-desc">Opis (opcjonalnie)</label>
-                            <textarea
-                                id="ev-desc"
-                                className="form-input"
-                                placeholder="Dodatkowe szczegóły..."
-                                value={desc}
-                                onChange={(e) => setDesc(e.target.value)}
-                            />
+                            <label className="form-label" htmlFor="ev-desc">Opis</label>
+                            <textarea id="ev-desc" className="form-input"
+                                placeholder="Dodatkowe szczegóły (opcjonalnie)"
+                                value={desc} onChange={(e) => setDesc(e.target.value)} />
                         </div>
 
-                        <div style={{ display: 'grid', gap: 12 }}>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
-                                <label className="form-label">
-                                    <input
-                                        type="checkbox"
-                                        checked={hasEnd}
-                                        onChange={(e) => setHasEnd(e.target.checked)}
-                                        style={{ marginRight: 8 }}
-                                    />
-                                    Wydarzenie posiada czas zakończenia
-                                </label>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                                <div className="form-group">
-                                    <label className="form-label" htmlFor="ev-start">Początek *</label>
-                                    <input
-                                        id="ev-start"
-                                        className="form-input"
-                                        type={hasEnd ? "datetime-local" : "date"}
-                                        value={hasEnd ? start : start.split('T')[0]}
-                                        onChange={(e) => setStart(e.target.value)}
-                                        required
-                                    />
-                                </div>
-                                {hasEnd && (
-                                    <div className="form-group">
-                                        <label className="form-label" htmlFor="ev-end">Koniec *</label>
-                                        <input
-                                            id="ev-end"
-                                            className="form-input"
-                                            type="datetime-local"
-                                            value={end}
-                                            onChange={(e) => setEnd(e.target.value)}
-                                            required={hasEnd}
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Color picker */}
                         <div className="form-group">
-                            <label className="form-label">Kolor</label>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {EVENT_COLORS.map((c) => (
-                                    <button
-                                        key={c}
-                                        type="button"
-                                        onClick={() => setColor(c)}
-                                        title={c}
-                                        style={{
-                                            width: 28, height: 28,
-                                            borderRadius: '50%',
-                                            background: c,
-                                            border: color === c ? '3px solid #fff' : '3px solid transparent',
-                                            outline: color === c ? `3px solid ${c}` : 'none',
-                                            cursor: 'pointer',
-                                            transition: 'transform 0.15s, opacity 0.15s',
-                                            transform: color === c ? 'scale(1.15) translateY(-2px)' : 'scale(1)',
-                                            opacity: color === c ? 1 : 0.6,
-                                            boxShadow: color === c ? `0 4px 12px ${c}80` : 'none',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                        }}
-                                    >
-                                        {color === c && <span style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>✓</span>}
-                                    </button>
-                                ))}
-                            </div>
+                            <label className="form-label" htmlFor="ev-start">Data i godzina rozpoczęcia</label>
+                            <input id="ev-start" className="form-input" type="datetime-local"
+                                value={start} onChange={(e) => setStart(e.target.value)} required />
                         </div>
+
+                        <label className="check-label">
+                            <input type="checkbox" checked={hasEnd} onChange={(e) => setHasEnd(e.target.checked)} />
+                            <span className="check-box" />
+                            <span>Ustaw godzinę zakończenia</span>
+                        </label>
+
+                        {hasEnd && (
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="ev-end">Data i godzina zakończenia</label>
+                                <input id="ev-end" className="form-input" type="datetime-local"
+                                    value={end} onChange={(e) => setEnd(e.target.value)} required={hasEnd} />
+                            </div>
+                        )}
                     </div>
 
                     <div className="modal-footer">
                         {isEditing && (
                             <button type="button" className="btn btn-danger btn-sm" onClick={handleDelete} disabled={loading}>
-                                🗑 Usuń
+                                <IconTrash /> Usuń
                             </button>
                         )}
                         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={loading}>

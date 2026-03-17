@@ -39,27 +39,78 @@ router.get('/', async (req, res) => {
 
     try {
         let query = `
-      SELECT id, title, description, start_date, end_date, notified, color
+      SELECT id, title, description, start_date, end_date, notified, color, recurrence, excluded_dates
       FROM   events
       WHERE  user_id = $1
     `;
         const params = [userId];
 
-        if (from) {
-            params.push(from);
-            query += ` AND start_date >= $${params.length}`;
-        }
-
-        if (to) {
-            params.push(to);
-            query += ` AND start_date <= $${params.length}`;
-        }
-
-        query += ' ORDER BY start_date ASC';
-
+        // Pobieramy wszystkie wydarzenia użytkownika, a potem filtrujemy/powielamy je w pamięci
+        // (W większych systemach filtrowanie byłoby w DB, ale dla cykliczności JS jest wygodniejszy)
         const result = await pool.query(query, params);
 
-        return res.status(200).json({ events: result.rows });
+        const dateFrom = from ? new Date(from) : new Date(2000, 0, 1);
+        const dateTo = to ? new Date(to) : new Date(2100, 0, 1);
+
+        const allEvents = [];
+
+        result.rows.forEach(ev => {
+            const start = new Date(ev.start_date);
+            const duration = ev.end_date ? (new Date(ev.end_date) - start) : 0;
+
+            if (!ev.recurrence || ev.recurrence === 'none') {
+                if (start <= dateTo && start >= dateFrom) {
+                    allEvents.push(ev);
+                }
+                return;
+            }
+
+            // Logika powielania (Daily, Weekly, Monthly)
+            let curr = new Date(start);
+            // Przeskocz do początku zakresu, aby nie pętlić się od 1900 roku
+            while (curr < dateFrom) {
+                if (ev.recurrence === 'daily') curr.setDate(curr.getDate() + 1);
+                else if (ev.recurrence === 'weekly') curr.setDate(curr.getDate() + 7);
+                else if (ev.recurrence === 'monthly') curr.setMonth(curr.getMonth() + 1);
+                else break;
+            }
+
+            // Generuj wystąpienia w zakresie
+            const startMonth = start.getMonth();
+            const exclusions = Array.isArray(ev.excluded_dates) ? ev.excluded_dates : [];
+
+            while (curr <= dateTo) {
+                // Limit: co tydzień tylko do końca miesiąca
+                if (ev.recurrence === 'weekly' && curr.getMonth() !== startMonth) break;
+
+                const newStart = new Date(curr);
+                // Kompensacja strefy czasowej dla porównania z wykluczeniami (PL: +1h/+2h)
+                const localDateAdjusted = new Date(newStart.getTime() + 2 * 60 * 60000);
+                const isoStart = localDateAdjusted.toISOString().split('T')[0];
+
+                // Pomiń jeśli data jest na liście wykluczonych
+                if (!exclusions.includes(isoStart)) {
+                    const newEnd = ev.end_date ? new Date(newStart.getTime() + duration) : null;
+
+                    allEvents.push({
+                        ...ev,
+                        id: `${ev.id}_${newStart.getTime()}`, // Unikalne ID dla frontu
+                        original_id: ev.id,
+                        is_recurring: true,
+                        start_date: newStart.toISOString(),
+                        end_date: newEnd ? newEnd.toISOString() : null
+                    });
+                }
+
+                if (ev.recurrence === 'daily') curr.setDate(curr.getDate() + 1);
+                else if (ev.recurrence === 'weekly') curr.setDate(curr.getDate() + 7);
+                else if (ev.recurrence === 'monthly') curr.setMonth(curr.getMonth() + 1);
+                else break;
+            }
+        });
+
+        allEvents.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+        return res.status(200).json({ events: allEvents });
     } catch (err) {
         console.error('[GET /api/events] Błąd:', err.message);
         return res.status(500).json({ error: 'Błąd serwera podczas pobierania wydarzeń.' });
@@ -81,7 +132,7 @@ router.get('/', async (req, res) => {
  * Odpowiedź 201: { event: { id, title, description, start_date, end_date, notified } }
  */
 router.post('/', async (req, res) => {
-    const { title, description, start_date, end_date, color } = req.body ?? {};
+    const { title, description, start_date, end_date, color, recurrence } = req.body ?? {};
     const userId = req.user.userId;
 
     // ── Walidacja ──────────────────────────────────────────────────────────────
@@ -99,10 +150,10 @@ router.post('/', async (req, res) => {
 
     try {
         const result = await pool.query(
-            `INSERT INTO events (user_id, title, description, start_date, end_date, color)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, title, description, start_date, end_date, notified, color`,
-            [userId, title, description ?? null, start_date, end_date ?? null, color ?? null]
+            `INSERT INTO events (user_id, title, description, start_date, end_date, color, recurrence, excluded_dates)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, title, description, start_date, end_date, notified, color, recurrence, excluded_dates`,
+            [userId, title, description ?? null, start_date, end_date ?? null, color ?? null, recurrence ?? 'none', '[]']
         );
 
         return res.status(201).json({ event: result.rows[0] });
@@ -130,7 +181,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const eventId = parseInt(req.params.id, 10);
     const userId = req.user.userId;
-    const { title, description, start_date, end_date, color } = req.body ?? {};
+    const { title, description, start_date, end_date, color, recurrence } = req.body ?? {};
 
     if (isNaN(eventId)) {
         return res.status(400).json({ error: 'Nieprawidłowe ID wydarzenia.' });
@@ -158,6 +209,8 @@ router.put('/:id', async (req, res) => {
         if (start_date !== undefined) { params.push(start_date); fields.push(`start_date = $${params.length}`); }
         if (end_date !== undefined) { params.push(end_date); fields.push(`end_date = $${params.length}`); }
         if (color !== undefined) { params.push(color); fields.push(`color = $${params.length}`); }
+        if (recurrence !== undefined) { params.push(recurrence); fields.push(`recurrence = $${params.length}`); }
+        if (req.body.excluded_dates !== undefined) { params.push(JSON.stringify(req.body.excluded_dates)); fields.push(`excluded_dates = $${params.length}`); }
 
         if (fields.length === 0) {
             return res.status(400).json({ error: 'Nie podano żadnych pól do aktualizacji.' });
@@ -173,7 +226,7 @@ router.put('/:id', async (req, res) => {
       UPDATE events
       SET    ${fields.join(', ')}
       WHERE  id = $${params.length}
-      RETURNING id, title, description, start_date, end_date, notified, color
+      RETURNING id, title, description, start_date, end_date, notified, color, recurrence, excluded_dates
     `;
 
         const result = await pool.query(query, params);
@@ -215,6 +268,47 @@ router.delete('/:id', async (req, res) => {
     } catch (err) {
         console.error('[DELETE /api/events/:id] Błąd:', err.message);
         return res.status(500).json({ error: 'Błąd serwera podczas usuwania wydarzenia.' });
+    }
+});
+
+// ── POST /api/events/:id/exclude ──────────────────────────────────────────
+/**
+ * Dodaje konkretną datę do listy wykluczeń wydarzenia cyklicznego.
+ */
+router.post('/:id/exclude', async (req, res) => {
+    const eventId = parseInt(req.params.id, 10);
+    const userId = req.user.userId;
+    const { date } = req.body; // format 'YYYY-MM-DD'
+
+    if (!date) return res.status(400).json({ error: 'Data jest wymagana.' });
+
+    try {
+        const existing = await pool.query(
+            'SELECT excluded_dates FROM events WHERE id = $1 AND user_id = $2',
+            [eventId, userId]
+        );
+
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: 'Wydarzenie nie istnieje.' });
+        }
+
+        const currentExclusions = Array.isArray(existing.rows[0].excluded_dates)
+            ? existing.rows[0].excluded_dates
+            : [];
+
+        if (!currentExclusions.includes(date)) {
+            currentExclusions.push(date);
+        }
+
+        await pool.query(
+            'UPDATE events SET excluded_dates = $1 WHERE id = $2',
+            [JSON.stringify(currentExclusions), eventId]
+        );
+
+        return res.status(200).json({ message: 'Data została wykluczona.' });
+    } catch (err) {
+        console.error('[POST /exclude] Błąd:', err.message);
+        return res.status(500).json({ error: 'Błąd serwera.' });
     }
 });
 

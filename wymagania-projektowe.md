@@ -52,15 +52,18 @@ Baza danych korzysta ze specjalnych typów obsługujących strefy czasowe (Timez
 ## 6. ZREALIZOWANE ZMIANY I FIXY (Obecny stan)
 - **Top Tabs Nawigacja:** Ekran podzielony na Kalendarz i Agendę za pomocą reagujących na przesunięcia `material-top-tabs`.
 - **Zarządzanie Datami:** Porzucenie surowych timestampów na rzecz precyzyjnego `TIMESTAMPTZ` opartego na strefach czasowych. Lokalne aplikowanie dat do widoku Kalendarza.
-- **UI/UX:** Zdecentralizowany, bezpieczny, pływający guzik FAB (Floating Action Button), poprawione zamykanie kalendarza.
-- **Powiadomienia Expo:** Pełna obsługa SDK 50+ z obiektami `type: DATE`.
+- **UI/UX (Ultra Polish):**
+    - **SVG Clock Picker:** Własny komponent zegara (`react-native-svg` + `PanResponder`) umożliwiający intuicyjne wybieranie godziny i minut poprzez gesty.
+    - **Global Alert Layer:** Przeniesienie komunikatów błędów i sukcesów na globalny poziom (`msgModal`), dzięki czemu błędy logowania są zawsze widoczne.
+    - **Refined Deletion:** Przebudowany modal usuwania z wysokim kontrastem i czytelnym wyborem zakresu dla wydarzeń cyklicznych.
+- **Powiadomienia Expo:** Pełna obsługa SDK 54.
 
 ## 7. PLANOWANE ROZSZERZENIA (ROADMAPA 2.0)
 Zdecydowano się na następujące kolejne ficzery do implementacji:
 1. **Tryb Jasny / Ciemny (Dark/Light Mode)** - automatyczne lub ręczne wsparcie dla obu trybów, z wykorzystaniem nowej palety kolorystycznej.
 2. **Widget Android (App Widget)** - zewnętrzny komponent ekranu głównego (np. expo-widgets), wyświetlający top 3 nadchodzące zadania.
 3. **Empty States z animacjami Lottie** - estetyczne, animowane stany dla pustych list.
-4. **Cykliczność Wydarzeń (Recurring Events)** - rozszerzona logika bazy danych z flagami interwałów powtarzania (cron / rrule).
+4. **Rozszerzona Cykliczność** - pełna edycja serii wydarzeń i obsługa wyjątków w seriach (RRule).
 
 ## 8. STRUKTURA REPOZYTORIUM
 - `/backend` - Kod serwerowy Node.js + plik `.env` + `migrate.js`.

@@ -1,27 +1,27 @@
 <div align="center">
-  <h1>📅 Calendary (Monorepo)</h1>
-  <p><strong>Inteligentny system kalendarza z powiadomieniami Push</strong></p>
-  <p>System stworzony w oparciu o architekturę Monorepo zawierający: Backend API (Node.js), Aplikację Webową (React) oraz Aplikację Mobilną (Expo / React Native).</p>
+  <h1>📅 Calendary (Mobile & Backend API)</h1>
+  <p><strong>Mobilny inteligentny kalendarz z powiadomieniami Push i top-tabs</strong></p>
+  <p>System stworzony w oparciu o architekturę rozdzieloną zawierającą: Backend API (Node.js/PostgreSQL) w Dockerze oraz natywną aplikację mobilną dla Androida (Expo / React Native) tunelowaną przez Cloudflare.</p>
 </div>
 
 ---
 
 ## 🏗 Stack Technologiczny
 
-- **Baza Danych:** PostgreSQL (konteneryzowana w Dockerze)
-- **Backend (API):** Node.js, Express.js, `pg`, JWT (JSON Web Tokens), `bcrypt`
-- **Powiadomienia:** `node-cron`, Firebase Cloud Messaging (FCM)
-- **Frontend Web:** React.js, Vite, FullCalendar, Vanilla CSS (Glassmorphism)
-- **Aplikacja Mobilna:** React Native, Expo, React Native Calendars, Expo SecureStore
+- **Baza Danych:** PostgreSQL (konteneryzowana w Dockerze) z obsługą TIMESTAMPTZ
+- **Backend (API):** Node.js, Express.js, `pg`, JWT, `bcrypt`
+- **Konfiguracja Sieci:** Cloudflare Tunnel (`cloudflared`) eksponujący środowisko na zewnątrz (api.slezinski.com)
+- **Aplikacja Mobilna:** React Native, Expo (SDK 50+), React Native Calendars, Expo Notifications, React Navigation (Material Top Tabs)
 
 ---
 
 ## 🚀 Jak uruchomić projekt na innym urządzeniu?
 
-Aby w pełni korzystać z systemu Calendary, musisz uruchomić 3 osobne instancje w terminalu:
-1. Bazę danych i Backend API
-2. Frontend Webowy (React)
+Aby w pełni korzystać z systemu Calendary, musisz uruchomić 3 usługi i podpiąć się aplikacją Expo Go:
+1. Bazę danych i Backend API w kontenerze / lokalnie
+2. Tunel Cloudflare łączący projekt z zewnątrz
 3. Aplikację Mobilną (Expo)
+
 
 Poniżej znajdziesz instrukcję krok po kroku.
 

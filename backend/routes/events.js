@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
 
         if (to) {
             params.push(to);
-            query += ` AND end_date <= $${params.length}`;
+            query += ` AND start_date <= $${params.length}`;
         }
 
         query += ' ORDER BY start_date ASC';

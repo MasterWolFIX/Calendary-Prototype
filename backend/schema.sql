@@ -22,9 +22,10 @@ CREATE TABLE IF NOT EXISTS events (
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title       VARCHAR(255) NOT NULL,
     description TEXT,
-    start_date  TIMESTAMP NOT NULL,
-    end_date    TIMESTAMP NOT NULL,
+    start_date  TIMESTAMPTZ NOT NULL,
+    end_date    TIMESTAMPTZ,
     notified    BOOLEAN DEFAULT FALSE,                       -- czy powiadomienie push zostało wysłane
+    color       VARCHAR(50),
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

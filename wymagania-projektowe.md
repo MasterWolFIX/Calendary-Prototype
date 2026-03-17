@@ -49,8 +49,20 @@ Baza danych korzysta ze specjalnych typów obsługujących strefy czasowe (Timez
 - Lokalne wymuszenie IPv4 w parametrach tunelu (`127.0.0.1:3000`) w Windowsie.
 - Bezpieczeństwo zapytań za pomocą nagłówka `Authorization: Bearer <token>` z JWT zapisanym w `SecureStore`.
 
-## 6. STRUKTURA REPOZYTORIUM
+## 6. ZREALIZOWANE ZMIANY I FIXY (Obecny stan)
+- **Top Tabs Nawigacja:** Ekran podzielony na Kalendarz i Agendę za pomocą reagujących na przesunięcia `material-top-tabs`.
+- **Zarządzanie Datami:** Porzucenie surowych timestampów na rzecz precyzyjnego `TIMESTAMPTZ` opartego na strefach czasowych. Lokalne aplikowanie dat do widoku Kalendarza.
+- **UI/UX:** Zdecentralizowany, bezpieczny, pływający guzik FAB (Floating Action Button), poprawione zamykanie kalendarza.
+- **Powiadomienia Expo:** Pełna obsługa SDK 50+ z obiektami `type: DATE`.
+
+## 7. PLANOWANE ROZSZERZENIA (ROADMAPA 2.0)
+Zdecydowano się na następujące kolejne ficzery do implementacji:
+1. **Tryb Jasny / Ciemny (Dark/Light Mode)** - automatyczne lub ręczne wsparcie dla obu trybów, z wykorzystaniem nowej palety kolorystycznej.
+2. **Widget Android (App Widget)** - zewnętrzny komponent ekranu głównego (np. expo-widgets), wyświetlający top 3 nadchodzące zadania.
+3. **Empty States z animacjami Lottie** - estetyczne, animowane stany dla pustych list.
+4. **Cykliczność Wydarzeń (Recurring Events)** - rozszerzona logika bazy danych z flagami interwałów powtarzania (cron / rrule).
+
+## 8. STRUKTURA REPOZYTORIUM
 - `/backend` - Kod serwerowy Node.js + plik `.env` + `migrate.js`.
 - `/mobile-app` - Aplikacja kliencka przeznaczona do kompilacji Expo EAS pod pliki APK.
 - `cloudflared.exe` & konfiguracja Cloudflare - Odpowiedzialne za bezobsługowe wystawienie portów do świata. 
-- *(Usunięto web-frontend)*

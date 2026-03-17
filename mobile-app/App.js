@@ -75,6 +75,7 @@ const NOTIF_OPTIONS = [
   { label: '30 minut wcześniej', value: 30 },
   { label: '1 godzinę wcześniej', value: 60 },
   { label: '2 godziny wcześniej', value: 120 },
+  { label: '1 dzień wcześniej', value: 1440 },
 ];
 
 const COLORS = [C.accent, '#ef4444', '#10b981', '#f59e0b', '#3b82f6', '#ec4899'];
@@ -85,7 +86,7 @@ async function scheduleNotification(title, startISO, minutes = 15) {
   if (trigger <= new Date()) return;
   const bodyLabel = minutes === 0
     ? `Teraz: ${title}`
-    : `Za ${minutes < 60 ? `${minutes} min` : `${minutes / 60}h`}: ${title}`;
+    : `Za ${minutes < 60 ? `${minutes} min` : minutes === 1440 ? '1 dzień' : `${minutes / 60}h`}: ${title}`;
   await Notifications.scheduleNotificationAsync({
     content: { title: 'Przypomnienie – Calendary', body: bodyLabel, sound: true },
     trigger,
@@ -133,6 +134,7 @@ export default function App() {
   const [pickerFor, setPickerFor] = useState('start');
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
   const [refresh, setRefresh] = useState(0);
+  const [editingEventId, setEditingEventId] = useState(null);
 
   // ustawienia powiadomień
   const [settingsModal, setSettingsModal] = useState(false);
@@ -165,7 +167,7 @@ export default function App() {
         const today = new Date();
         const from = new Date(today.getFullYear() - 1, 0, 1).toISOString();
         const to = new Date(today.getFullYear() + 1, 11, 31).toISOString();
-        const { data } = await axios.get(`${API_URL}/events`, { params: { from, to }, headers: { Authorization: `Bearer ${token}` } });
+        const { data } = await axios.get(`${API_URL}/events`, { params: { from, to }, headers: { Authorization: `Bearer ${token}` }, timeout: 10000 });
         const map = {};
         data.events.forEach(ev => {
           const day = ev.start_date.split('T')[0];
@@ -214,17 +216,23 @@ export default function App() {
     setToken(null); setEventsMap({});
   };
 
-  const handleAddEvent = async () => {
+  const handleSaveEvent = async () => {
     if (!title.trim()) return Alert.alert('Błąd', 'Tytuł jest wymagany.');
     const parts = selectedDate.split('-');
     const build = (t) => { const d = new Date(t); d.setFullYear(+parts[0], +parts[1] - 1, +parts[2]); return d.toISOString(); };
     const startISO = build(startTime);
     const endISO = hasEnd ? build(endTime) : null;
     try {
-      await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor }, { headers: { Authorization: `Bearer ${token}` } });
-      if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
-      Alert.alert('Zapisano', 'Wydarzenie zostało dodane.');
-      setModal(false); setTitle(''); setDesc(''); setHasEnd(false); setSelectedColor(COLORS[0]);
+      if (editingEventId) {
+        await axios.put(`${API_URL}/events/${editingEventId}`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor }, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 });
+        if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
+        Alert.alert('Zapisano', 'Wydarzenie zostało zaktualizowane.');
+      } else {
+        await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor }, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 });
+        if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
+        Alert.alert('Zapisano', 'Wydarzenie zostało dodane.');
+      }
+      setModal(false); setTitle(''); setDesc(''); setHasEnd(false); setSelectedColor(COLORS[0]); setEditingEventId(null);
       setRefresh(p => p + 1);
     } catch { Alert.alert('Błąd', 'Nie udało się zapisać.'); }
   };
@@ -361,7 +369,16 @@ export default function App() {
             showsVerticalScrollIndicator={false}
             renderItem={({ item }) => (
               <TouchableOpacity style={s.eventCard}
-                onPress={() => Alert.alert(item.title, `${item.description || 'Brak opisu'}\n\n${fmt(item._start)}${item._end ? ` – ${fmt(item._end)}` : ''}`)}
+                onPress={() => {
+                  setEditingEventId(item.id);
+                  setTitle(item.title);
+                  setDesc(item.description || '');
+                  setStart(item._start);
+                  setHasEnd(!!item._end);
+                  setEnd(item._end || item._start);
+                  setSelectedColor(item.color || C.accent);
+                  setModal(true);
+                }}
                 onLongPress={() => handleDelete(item.id, item.title)}
                 activeOpacity={0.75}
               >
@@ -378,7 +395,11 @@ export default function App() {
       </View>
 
       {/* FAB */}
-      <TouchableOpacity style={s.fab} onPress={() => setModal(true)} activeOpacity={0.85}>
+      <TouchableOpacity style={s.fab} onPress={() => {
+        setEditingEventId(null); setTitle(''); setDesc(''); setHasEnd(false); 
+        setStart(new Date()); setEnd(new Date()); setSelectedColor(COLORS[0]); 
+        setModal(true); 
+      }} activeOpacity={0.85}>
         <Text style={s.fabTxt}>+</Text>
       </TouchableOpacity>
 
@@ -388,7 +409,7 @@ export default function App() {
           <View style={s.sheet}>
             <View style={s.sheetHandle} />
             <View style={s.sheetHeader}>
-              <Text style={s.sheetTitle}>Nowe wydarzenie</Text>
+              <Text style={s.sheetTitle}>{editingEventId ? 'Edytuj wydarzenie' : 'Nowe wydarzenie'}</Text>
               <TouchableOpacity onPress={() => setModal(false)} style={s.closeBtn}>
                 <Text style={s.closeTxt}>✕</Text>
               </TouchableOpacity>
@@ -442,10 +463,17 @@ export default function App() {
             </ScrollView>
 
             <View style={s.sheetBtns}>
-              <TouchableOpacity style={s.cancelBtn} onPress={() => setModal(false)}>
-                <Text style={s.cancelTxt}>Anuluj</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.saveBtn} onPress={handleAddEvent}>
+              {editingEventId && (
+                <TouchableOpacity style={s.cancelBtn} onPress={() => { setModal(false); handleDelete(editingEventId, title); }}>
+                  <Text style={[s.cancelTxt, { color: C.danger }]}>Usuń</Text>
+                </TouchableOpacity>
+              )}
+              {!editingEventId && (
+                <TouchableOpacity style={s.cancelBtn} onPress={() => setModal(false)}>
+                  <Text style={s.cancelTxt}>Anuluj</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={s.saveBtn} onPress={handleSaveEvent}>
                 <Text style={s.saveTxt}>Zapisz</Text>
               </TouchableOpacity>
             </View>

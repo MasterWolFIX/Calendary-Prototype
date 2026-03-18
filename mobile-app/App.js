@@ -79,26 +79,111 @@ const NOTIF_OPTIONS = [
   { label: '30 minut wcześniej', value: 30 },
   { label: '1 godzinę wcześniej', value: 60 },
   { label: '2 godziny wcześniej', value: 120 },
+  { label: '3 godziny wcześniej', value: 180 },
+  { label: '6 godzin wcześniej', value: 360 },
+  { label: '12 godzin wcześniej', value: 720 },
   { label: '1 dzień wcześniej', value: 1440 },
+  { label: '3 dni wcześniej', value: 4320 },
+  { label: '1 tydzień wcześniej', value: 10080 },
 ];
 
 function getTheme(mode) { return THEMES[mode] || THEMES.dark; }
 
-async function scheduleNotification(title, startISO, minutes = 15) {
-  const triggerDate = new Date(startISO);
-  triggerDate.setMinutes(triggerDate.getMinutes() - minutes);
-  if (triggerDate <= new Date()) return;
-  const bodyLabel = minutes === 0
-    ? `Teraz: ${title}`
-    : `Za ${minutes < 60 ? `${minutes} min` : minutes === 1440 ? '1 dzień' : `${minutes / 60}h`}: ${title}`;
-  await Notifications.scheduleNotificationAsync({
-    content: { title: 'Przypomnienie – Calendary', body: bodyLabel, sound: true },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date: triggerDate,
-    },
-  });
+// ── Pomocnicze funkcje zarządzania ID powiadomień per wydarzenie ──────────
+async function getEventNotifIds(eventId) {
+  try {
+    const raw = await SecureStore.getItemAsync(`notif_ids_${eventId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
 }
+
+async function saveEventNotifIds(eventId, ids) {
+  try {
+    await SecureStore.setItemAsync(`notif_ids_${eventId}`, JSON.stringify(ids));
+  } catch { }
+}
+
+async function cancelEventNotifications(eventId) {
+  const ids = await getEventNotifIds(eventId);
+  for (const id of ids) {
+    try { await Notifications.cancelScheduledNotificationAsync(id); } catch { }
+  }
+  await SecureStore.deleteItemAsync(`notif_ids_${eventId}`).catch(() => { });
+}
+
+// Etykieta gdy powiadomienie wysyłane O CZASIE (zaplanowane)
+function formatNotifLabel(title, minutes) {
+  if (minutes === 0) return `Teraz: ${title}`;
+  if (minutes < 60) return `Za ${minutes} min: ${title}`;
+  if (minutes === 60) return `Za 1 godzinę: ${title}`;
+  if (minutes === 120) return `Za 2 godziny: ${title}`;
+  if (minutes === 180) return `Za 3 godziny: ${title}`;
+  if (minutes === 360) return `Za 6 godzin: ${title}`;
+  if (minutes === 720) return `Za 12 godzin: ${title}`;
+  if (minutes === 1440) return `Za 1 dzień: ${title}`;
+  if (minutes === 4320) return `Za 3 dni: ${title}`;
+  if (minutes === 10080) return `Za tydzień: ${title}`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `Za ${h}h ${m}min: ${title}` : `Za ${h}h: ${title}`;
+}
+
+// Etykieta gdy trigger minął — piszemy ile FAKTYCZNIE zostało do eventu
+function formatNotifLabelImmediate(title, msLeft) {
+  const totalMin = Math.round(msLeft / 60000);
+  if (totalMin <= 0) return `⏰ Teraz: ${title}`;
+  if (totalMin < 60) return `⏰ Przypomnienie: "${title}" za ${totalMin} min`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h < 24) return m > 0
+    ? `⏰ Przypomnienie: "${title}" za ${h}h ${m}min`
+    : `⏰ Przypomnienie: "${title}" za ${h}h`;
+  const days = Math.floor(h / 24);
+  const remH = h % 24;
+  return remH > 0
+    ? `⏰ Przypomnienie: "${title}" za ${days} dni i ${remH}h`
+    : `⏰ Przypomnienie: "${title}" za ${days} ${days === 1 ? 'dzień' : 'dni'}`;
+}
+
+// Zwraca identifier zaplanowanego powiadomienia
+async function scheduleNotification(title, startISO, minutes = 15) {
+  const eventDate = new Date(startISO);
+  eventDate.setSeconds(0, 0);
+  const now = Date.now();
+
+  // Jeśli samo wydarzenie już minęło — nic nie robimy
+  if (eventDate.getTime() <= now) return null;
+
+  const triggerTime = eventDate.getTime() - minutes * 60 * 1000;
+
+  let content;
+  let trigger;
+
+  if (triggerTime <= now) {
+    // Trigger minął ale event jeszcze nadchodzi — wyślij natychmiast
+    content = {
+      title: '📅 Calendary – Spóźnione przypomnienie',
+      body: formatNotifLabelImmediate(title, eventDate.getTime() - now),
+      sound: true,
+    };
+    trigger = { seconds: 2 };
+  } else {
+    // Normalny tryb — zaplanowane na przyszłość
+    content = {
+      title: 'Przypomnienie – Calendary',
+      body: formatNotifLabel(title, minutes),
+      sound: true,
+    };
+    trigger = {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: new Date(triggerTime),
+    };
+  }
+
+  const id = await Notifications.scheduleNotificationAsync({ content, trigger });
+  return id;
+}
+
 
 async function registerPush(token) {
   try {
@@ -287,17 +372,25 @@ export default function App() {
     try {
       if (editingEventId) {
         await axios.put(`${API_URL}/events/${editingEventId}`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor, recurrence }, { headers: { Authorization: `Bearer ${token}` } });
+        // Anuluj STARE powiadomienia przed zaplanowaniem nowych
+        await cancelEventNotifications(editingEventId);
         if (notifEnabled && Array.isArray(notifMinutes)) {
+          const newIds = [];
           for (const minutes of notifMinutes) {
-            await scheduleNotification(title.trim(), startISO, minutes);
+            const id = await scheduleNotification(title.trim(), startISO, minutes);
+            if (id) newIds.push(id);
           }
+          await saveEventNotifIds(editingEventId, newIds);
         }
       } else {
-        await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor, recurrence }, { headers: { Authorization: `Bearer ${token}` } });
-        if (notifEnabled && Array.isArray(notifMinutes)) {
+        const { data: newEvent } = await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor, recurrence }, { headers: { Authorization: `Bearer ${token}` } });
+        if (notifEnabled && Array.isArray(notifMinutes) && newEvent?.event?.id) {
+          const newIds = [];
           for (const minutes of notifMinutes) {
-            await scheduleNotification(title.trim(), startISO, minutes);
+            const id = await scheduleNotification(title.trim(), startISO, minutes);
+            if (id) newIds.push(id);
           }
+          await saveEventNotifIds(newEvent.event.id, newIds);
         }
       }
       setModal(false); setTitle(''); setDesc(''); setHasEnd(false); setSelectedColor(COLORS[0]); setRecurrence('none'); setEditingEventId(null);
@@ -321,6 +414,8 @@ export default function App() {
         const dayStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         await axios.post(`${API_URL}/events/${original_id}/exclude`, { date: dayStr }, { headers: { Authorization: `Bearer ${token}` } });
       } else if (type === 'series' || type === 'single') {
+        // Anuluj lokalne powiadomienia przed usunięciem eventu
+        await cancelEventNotifications(original_id || id);
         await axios.delete(`${API_URL}/events/${original_id || id}`, { headers: { Authorization: `Bearer ${token}` } });
       }
       setConfirmModal(false);
@@ -334,213 +429,213 @@ export default function App() {
   // FIX 2: Przepisany time picker – przyciski +/- zamiast ScrollView
   // Eliminuje problemy z zagnieżdżonymi ScrollView wewnątrz Modal
   // ── Wklej to zamiast całej funkcji TimePickerUI ──────────────────────────
-// Potrzebujesz też: npm install react-native-svg
+  // Potrzebujesz też: npm install react-native-svg
 
 
-const TimePickerUI = () => {
-  const curr = new Date(pickerFor === 'start' ? startTime : endTime);
-  const [clockMode, setClockMode] = useState('h');
-  const [tempH, setTempH] = useState(curr.getHours());
-  const [tempM, setTempM] = useState(curr.getMinutes());
- 
-  const CLOCK_SIZE = 260;
-  const CX = 130, CY = 130, R = 118, INNER_R = 78;
-  const PAD = n => String(n).padStart(2, '0');
- 
-  const confirm = () => {
-    const d = new Date(curr);
-    d.setHours(tempH);
-    d.setMinutes(tempM);
-    if (pickerFor === 'start') setStart(d);
-    else setEnd(d);
-    setPicker(false);
-  };
- 
-  const handleTouch = (x, y) => {
-    const dx = x - CX, dy = y - CY;
-    const angle = Math.atan2(dy, dx);
-    const dist = Math.sqrt(dx * dx + dy * dy);
- 
-    if (clockMode === 'h') {
-      // zewnętrzny pierścień: 1–12, wewnętrzny: 13–24 (0)
-      let h = Math.round((angle + Math.PI / 2) / (2 * Math.PI) * 12);
-      if (h <= 0) h += 12;
-      const isInner = dist < (R * 0.55);
-      if (isInner) {
-        // 13–24, gdzie pozycja 12 = 0 (północ)
-        setTempH(h === 12 ? 0 : h + 12);
+  const TimePickerUI = () => {
+    const curr = new Date(pickerFor === 'start' ? startTime : endTime);
+    const [clockMode, setClockMode] = useState('h');
+    const [tempH, setTempH] = useState(curr.getHours());
+    const [tempM, setTempM] = useState(curr.getMinutes());
+
+    const CLOCK_SIZE = 260;
+    const CX = 130, CY = 130, R = 118, INNER_R = 78;
+    const PAD = n => String(n).padStart(2, '0');
+
+    const confirm = () => {
+      const d = new Date(curr);
+      d.setHours(tempH);
+      d.setMinutes(tempM);
+      if (pickerFor === 'start') setStart(d);
+      else setEnd(d);
+      setPicker(false);
+    };
+
+    const handleTouch = (x, y) => {
+      const dx = x - CX, dy = y - CY;
+      const angle = Math.atan2(dy, dx);
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (clockMode === 'h') {
+        // zewnętrzny pierścień: 1–12, wewnętrzny: 13–24 (0)
+        let h = Math.round((angle + Math.PI / 2) / (2 * Math.PI) * 12);
+        if (h <= 0) h += 12;
+        const isInner = dist < (R * 0.55);
+        if (isInner) {
+          // 13–24, gdzie pozycja 12 = 0 (północ)
+          setTempH(h === 12 ? 0 : h + 12);
+        } else {
+          setTempH(h);
+        }
       } else {
-        setTempH(h);
+        let m = Math.round((angle + Math.PI / 2) / (2 * Math.PI) * 60);
+        if (m < 0) m += 60;
+        m = Math.round(m / 5) * 5;
+        if (m >= 60) m = 0;
+        setTempM(m);
       }
-    } else {
-      let m = Math.round((angle + Math.PI / 2) / (2 * Math.PI) * 60);
-      if (m < 0) m += 60;
-      m = Math.round(m / 5) * 5;
-      if (m >= 60) m = 0;
-      setTempM(m);
-    }
-  };
- 
-  const panResponder = React.useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: (e) => {
-      handleTouch(e.nativeEvent.locationX, e.nativeEvent.locationY);
-    },
-    onPanResponderMove: (e) => {
-      handleTouch(e.nativeEvent.locationX, e.nativeEvent.locationY);
-    },
-    onPanResponderRelease: () => {
-      if (clockMode === 'h') setClockMode('m');
-    },
-  }), [clockMode, tempH, tempM]);
- 
-  const renderHourLabels = () => {
-    const nodes = [];
-    // zewnętrzny: 1–12
-    const outer = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-    outer.forEach((h, i) => {
-      const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
-      const x = CX + R * 0.8 * Math.cos(angle);
-      const y = CY + R * 0.8 * Math.sin(angle);
-      const isActive = h === tempH;
-      if (isActive) nodes.push(<Circle key={`oc${i}`} cx={x} cy={y} r={19} fill={C.accent} />);
-      nodes.push(
-        <SvgText key={`ot${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
-          fill={isActive ? '#fff' : C.text} fontSize={14} fontWeight="500">
-          {PAD(h)}
-        </SvgText>
-      );
-    });
- 
-    // wewnętrzny: 13–24 (gdzie 24 = pozycja 12 = godzina 0)
-    const inner = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
-    inner.forEach((h, i) => {
-      const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
-      const x = CX + INNER_R * 0.65 * Math.cos(angle);
-      const y = CY + INNER_R * 0.65 * Math.sin(angle);
-      const isActive = h === tempH;
-      const label = h === 0 ? '24' : PAD(h);
-      if (isActive) nodes.push(<Circle key={`ic${i}`} cx={x} cy={y} r={17} fill={C.accent} />);
-      nodes.push(
-        <SvgText key={`it${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
-          fill={isActive ? '#fff' : C.sub} fontSize={12}>
-          {label}
-        </SvgText>
-      );
-    });
- 
-    // wskazówka
-    const isInner = tempH === 0 || tempH >= 13;
-    const ring = isInner ? INNER_R * 0.65 : R * 0.8;
-    const idx = isInner
-      ? (tempH === 0 ? 0 : tempH - 12)
-      : (tempH === 12 ? 0 : tempH);
-    const angle = (idx / 12) * 2 * Math.PI - Math.PI / 2;
-    nodes.push(
-      <Line key="hand"
-        x1={CX} y1={CY}
-        x2={CX + ring * Math.cos(angle)}
-        y2={CY + ring * Math.sin(angle)}
-        stroke={C.accent} strokeWidth={2} strokeLinecap="round" />
-    );
-    nodes.push(<Circle key="center" cx={CX} cy={CY} r={5} fill={C.accent} />);
-    return nodes;
-  };
- 
-  const renderMinuteLabels = () => {
-    const nodes = [];
-    for (let i = 0; i < 60; i++) {
-      const angle = (i / 60) * 2 * Math.PI - Math.PI / 2;
-      const x = CX + R * 0.8 * Math.cos(angle);
-      const y = CY + R * 0.8 * Math.sin(angle);
-      const isActive = i === tempM;
-      const isQuint = i % 5 === 0;
-      if (isActive) nodes.push(<Circle key={`mc${i}`} cx={x} cy={y} r={19} fill={C.accent} />);
-      if (isQuint) {
+    };
+
+    const panResponder = React.useMemo(() => PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => {
+        handleTouch(e.nativeEvent.locationX, e.nativeEvent.locationY);
+      },
+      onPanResponderMove: (e) => {
+        handleTouch(e.nativeEvent.locationX, e.nativeEvent.locationY);
+      },
+      onPanResponderRelease: () => {
+        if (clockMode === 'h') setClockMode('m');
+      },
+    }), [clockMode, tempH, tempM]);
+
+    const renderHourLabels = () => {
+      const nodes = [];
+      // zewnętrzny: 1–12
+      const outer = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+      outer.forEach((h, i) => {
+        const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
+        const x = CX + R * 0.8 * Math.cos(angle);
+        const y = CY + R * 0.8 * Math.sin(angle);
+        const isActive = h === tempH;
+        if (isActive) nodes.push(<Circle key={`oc${i}`} cx={x} cy={y} r={19} fill={C.accent} />);
         nodes.push(
-          <SvgText key={`mt${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
-            fill={isActive ? '#fff' : C.text} fontSize={13} fontWeight="500">
-            {PAD(i)}
+          <SvgText key={`ot${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
+            fill={isActive ? '#fff' : C.text} fontSize={14} fontWeight="500">
+            {PAD(h)}
           </SvgText>
         );
+      });
+
+      // wewnętrzny: 13–24 (gdzie 24 = pozycja 12 = godzina 0)
+      const inner = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+      inner.forEach((h, i) => {
+        const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
+        const x = CX + INNER_R * 0.65 * Math.cos(angle);
+        const y = CY + INNER_R * 0.65 * Math.sin(angle);
+        const isActive = h === tempH;
+        const label = h === 0 ? '24' : PAD(h);
+        if (isActive) nodes.push(<Circle key={`ic${i}`} cx={x} cy={y} r={17} fill={C.accent} />);
+        nodes.push(
+          <SvgText key={`it${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
+            fill={isActive ? '#fff' : C.sub} fontSize={12}>
+            {label}
+          </SvgText>
+        );
+      });
+
+      // wskazówka
+      const isInner = tempH === 0 || tempH >= 13;
+      const ring = isInner ? INNER_R * 0.65 : R * 0.8;
+      const idx = isInner
+        ? (tempH === 0 ? 0 : tempH - 12)
+        : (tempH === 12 ? 0 : tempH);
+      const angle = (idx / 12) * 2 * Math.PI - Math.PI / 2;
+      nodes.push(
+        <Line key="hand"
+          x1={CX} y1={CY}
+          x2={CX + ring * Math.cos(angle)}
+          y2={CY + ring * Math.sin(angle)}
+          stroke={C.accent} strokeWidth={2} strokeLinecap="round" />
+      );
+      nodes.push(<Circle key="center" cx={CX} cy={CY} r={5} fill={C.accent} />);
+      return nodes;
+    };
+
+    const renderMinuteLabels = () => {
+      const nodes = [];
+      for (let i = 0; i < 60; i++) {
+        const angle = (i / 60) * 2 * Math.PI - Math.PI / 2;
+        const x = CX + R * 0.8 * Math.cos(angle);
+        const y = CY + R * 0.8 * Math.sin(angle);
+        const isActive = i === tempM;
+        const isQuint = i % 5 === 0;
+        if (isActive) nodes.push(<Circle key={`mc${i}`} cx={x} cy={y} r={19} fill={C.accent} />);
+        if (isQuint) {
+          nodes.push(
+            <SvgText key={`mt${i}`} x={x} y={y} textAnchor="middle" alignmentBaseline="central"
+              fill={isActive ? '#fff' : C.text} fontSize={13} fontWeight="500">
+              {PAD(i)}
+            </SvgText>
+          );
+        }
       }
-    }
-    const angle = (tempM / 60) * 2 * Math.PI - Math.PI / 2;
-    nodes.push(
-      <Line key="hand"
-        x1={CX} y1={CY}
-        x2={CX + R * 0.8 * Math.cos(angle)}
-        y2={CY + R * 0.8 * Math.sin(angle)}
-        stroke={C.accent} strokeWidth={2} strokeLinecap="round" />
-    );
-    nodes.push(<Circle key="center" cx={CX} cy={CY} r={5} fill={C.accent} />);
-    return nodes;
-  };
- 
-  return (
-    <View style={{ paddingVertical: 12, alignItems: 'center' }}>
- 
-      {/* Przełącznik trybu */}
-      <View style={{
-        flexDirection: 'row', borderWidth: 1, borderColor: C.border,
-        borderRadius: 10, overflow: 'hidden', marginBottom: 16,
-      }}>
-        {[['h', 'Godzina'], ['m', 'Minuty']].map(([val, lbl]) => (
-          <TouchableOpacity key={val} onPress={() => setClockMode(val)}
+      const angle = (tempM / 60) * 2 * Math.PI - Math.PI / 2;
+      nodes.push(
+        <Line key="hand"
+          x1={CX} y1={CY}
+          x2={CX + R * 0.8 * Math.cos(angle)}
+          y2={CY + R * 0.8 * Math.sin(angle)}
+          stroke={C.accent} strokeWidth={2} strokeLinecap="round" />
+      );
+      nodes.push(<Circle key="center" cx={CX} cy={CY} r={5} fill={C.accent} />);
+      return nodes;
+    };
+
+    return (
+      <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+
+        {/* Przełącznik trybu */}
+        <View style={{
+          flexDirection: 'row', borderWidth: 1, borderColor: C.border,
+          borderRadius: 10, overflow: 'hidden', marginBottom: 16,
+        }}>
+          {[['h', 'Godzina'], ['m', 'Minuty']].map(([val, lbl]) => (
+            <TouchableOpacity key={val} onPress={() => setClockMode(val)}
+              style={{
+                paddingHorizontal: 28, paddingVertical: 9,
+                backgroundColor: clockMode === val ? C.accentDim : 'transparent',
+              }}>
+              <Text style={{ color: clockMode === val ? C.accent : C.sub, fontWeight: '600', fontSize: 13 }}>
+                {lbl}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Wyświetlacz czasu */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 20, gap: 4 }}>
+          <TouchableOpacity
+            onPress={() => setClockMode('h')}
             style={{
-              paddingHorizontal: 28, paddingVertical: 9,
-              backgroundColor: clockMode === val ? C.accentDim : 'transparent',
+              paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+              backgroundColor: clockMode === 'h' ? C.accentDim : 'transparent',
             }}>
-            <Text style={{ color: clockMode === val ? C.accent : C.sub, fontWeight: '600', fontSize: 13 }}>
-              {lbl}
+            <Text style={{ fontSize: 52, fontWeight: '700', color: clockMode === 'h' ? C.accent : C.text, lineHeight: 58 }}>
+              {PAD(tempH)}
             </Text>
           </TouchableOpacity>
-        ))}
-      </View>
- 
-      {/* Wyświetlacz czasu */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 20, gap: 4 }}>
+          <Text style={{ fontSize: 48, fontWeight: '300', color: C.sub, lineHeight: 58 }}>:</Text>
+          <TouchableOpacity
+            onPress={() => setClockMode('m')}
+            style={{
+              paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+              backgroundColor: clockMode === 'm' ? C.accentDim : 'transparent',
+            }}>
+            <Text style={{ fontSize: 52, fontWeight: '700', color: clockMode === 'm' ? C.accent : C.text, lineHeight: 58 }}>
+              {PAD(tempM)}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Tarcza */}
+        <View {...panResponder.panHandlers} style={{ width: CLOCK_SIZE, height: CLOCK_SIZE }}>
+          <Svg width={CLOCK_SIZE} height={CLOCK_SIZE}>
+            <Circle cx={CX} cy={CY} r={R} fill={C.surface} />
+            {clockMode === 'h' ? renderHourLabels() : renderMinuteLabels()}
+          </Svg>
+        </View>
+
+        {/* Zatwierdź */}
         <TouchableOpacity
-          onPress={() => setClockMode('h')}
-          style={{
-            paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
-            backgroundColor: clockMode === 'h' ? C.accentDim : 'transparent',
-          }}>
-          <Text style={{ fontSize: 52, fontWeight: '700', color: clockMode === 'h' ? C.accent : C.text, lineHeight: 58 }}>
-            {PAD(tempH)}
-          </Text>
-        </TouchableOpacity>
-        <Text style={{ fontSize: 48, fontWeight: '300', color: C.sub, lineHeight: 58 }}>:</Text>
-        <TouchableOpacity
-          onPress={() => setClockMode('m')}
-          style={{
-            paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
-            backgroundColor: clockMode === 'm' ? C.accentDim : 'transparent',
-          }}>
-          <Text style={{ fontSize: 52, fontWeight: '700', color: clockMode === 'm' ? C.accent : C.text, lineHeight: 58 }}>
-            {PAD(tempM)}
-          </Text>
+          onPress={confirm}
+          style={[s.saveBtn, { marginTop: 16, width: '80%', height: 50, borderRadius: 12 }]}>
+          <Text style={s.saveTxt}>ZATWIERDŹ</Text>
         </TouchableOpacity>
       </View>
- 
-      {/* Tarcza */}
-      <View {...panResponder.panHandlers} style={{ width: CLOCK_SIZE, height: CLOCK_SIZE }}>
-        <Svg width={CLOCK_SIZE} height={CLOCK_SIZE}>
-          <Circle cx={CX} cy={CY} r={R} fill={C.surface} />
-          {clockMode === 'h' ? renderHourLabels() : renderMinuteLabels()}
-        </Svg>
-      </View>
- 
-      {/* Zatwierdź */}
-      <TouchableOpacity
-        onPress={confirm}
-        style={[s.saveBtn, { marginTop: 16, width: '80%', height: 50, borderRadius: 12 }]}>
-        <Text style={s.saveTxt}>ZATWIERDŹ</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
+    );
+  };
 
   const localSelected = new Date(selectedDate);
   const selectedLocalKey = localSelected.getFullYear() + '-' + String(localSelected.getMonth() + 1).padStart(2, '0') + '-' + String(localSelected.getDate()).padStart(2, '0');
@@ -833,37 +928,90 @@ const TimePickerUI = () => {
                 <Text style={s.closeTxt}>✕</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Włącznik główny */}
             <View style={s.switchRow}>
-              <Text style={s.switchLbl}>Włącz powiadomienia</Text>
-              <Switch value={notifEnabled} onValueChange={async (v) => { setNotifEnabled(v); await SecureStore.setItemAsync('notif_enabled', String(v)); }} trackColor={{ false: C.muted, true: C.accent }} thumbColor="#fff" />
+              <View style={{ flex: 1 }}>
+                <Text style={s.switchLbl}>Włącz powiadomienia</Text>
+                <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
+                  {notifEnabled
+                    ? notifMinutes.length === 0
+                      ? 'Brak wybranych przypomnień'
+                      : `${notifMinutes.length} przypomnienie${notifMinutes.length > 1 ? (notifMinutes.length < 5 ? 'a' : '') : ''} aktywne`
+                    : 'Powiadomienia wyłączone'
+                  }
+                </Text>
+              </View>
+              <Switch
+                value={notifEnabled}
+                onValueChange={async (v) => { setNotifEnabled(v); await SecureStore.setItemAsync('notif_enabled', String(v)); }}
+                trackColor={{ false: C.muted, true: C.accent }}
+                thumbColor="#fff"
+              />
             </View>
+
             {notifEnabled && (
-              <>
-                <Text style={[s.fieldLbl, { marginTop: 14, marginBottom: 10 }]}>CZAS PRZED WYDARZENIEM</Text>
+              <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
+                <Text style={[s.fieldLbl, { marginTop: 16, marginBottom: 4 }]}>WYBIERZ PRZYPOMNIENIA (możesz zaznaczyć kilka)</Text>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
+                  Każde zaznaczone przypomnienie wyślę osobne powiadomienie.
+                </Text>
                 {NOTIF_OPTIONS.map(opt => {
-                  const isSelected = notifMinutes.includes(opt.value);
+                  const isSelected = Array.isArray(notifMinutes) && notifMinutes.includes(opt.value);
                   return (
                     <TouchableOpacity
                       key={opt.value}
-                      style={[s.notifOption, isSelected && s.notifOptionActive]}
+                      style={[
+                        s.notifOption,
+                        isSelected && s.notifOptionActive,
+                        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+                      ]}
                       onPress={async () => {
-                        let newMinutes;
-                        if (isSelected) {
-                          newMinutes = notifMinutes.filter(m => m !== opt.value);
-                        } else {
-                          newMinutes = [...notifMinutes, opt.value];
-                        }
+                        const current = Array.isArray(notifMinutes) ? notifMinutes : [15];
+                        const newMinutes = isSelected
+                          ? current.filter(m => m !== opt.value)
+                          : [...current, opt.value].sort((a, b) => a - b);
                         setNotifMinutes(newMinutes);
                         await SecureStore.setItemAsync('notif_minutes', JSON.stringify(newMinutes));
                       }}
                       activeOpacity={0.75}
                     >
-                      <Text style={[s.notifOptionTxt, isSelected && s.notifOptionTxtActive]}>{opt.label}</Text>
-                      {isSelected && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        {/* Checkbox */}
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 6,
+                          borderWidth: 2,
+                          borderColor: isSelected ? C.accent : C.border,
+                          backgroundColor: isSelected ? C.accent : 'transparent',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {isSelected && <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800', lineHeight: 16 }}>✓</Text>}
+                        </View>
+                        <Text style={[s.notifOptionTxt, isSelected && s.notifOptionTxtActive]}>
+                          {opt.label}
+                        </Text>
+                      </View>
+                      {isSelected && (
+                        <View style={{ backgroundColor: C.accentDim, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: C.accent, fontSize: 11, fontWeight: '700' }}>AKTYWNE</Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
-              </>
+
+                {/* Podsumowanie aktywnych */}
+                {notifMinutes.length > 0 && (
+                  <View style={{ marginTop: 16, padding: 14, backgroundColor: C.accentDim, borderRadius: 12, borderWidth: 1, borderColor: C.accent + '33' }}>
+                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>🔔 AKTYWNE PRZYPOMNIENIA</Text>
+                    {[...notifMinutes].sort((a, b) => a - b).map(m => (
+                      <Text key={m} style={{ color: C.text, fontSize: 13, marginBottom: 3 }}>
+                        • {NOTIF_OPTIONS.find(o => o.value === m)?.label ?? `${m} min wcześniej`}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
             )}
           </View>
         </View>

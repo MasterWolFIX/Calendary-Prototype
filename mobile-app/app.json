@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -30,20 +30,7 @@
     },
     "plugins": [
       "expo-secure-store",
-      "@react-native-community/datetimepicker",
-      [
-        "react-native-android-widget",
-        {
-          "widgets": [
-            {
-              "name": "CalendaryWidget",
-              "label": "Calendary",
-              "description": "Widok najbliższych wydarzeń",
-              "previewImage": "./assets/icon.png"
-            }
-          ]
-        }
-      ]
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {

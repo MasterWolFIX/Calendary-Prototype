@@ -166,7 +166,11 @@ async function scheduleNotification(title, startISO, minutes = 15) {
       body: formatNotifLabelImmediate(title, eventDate.getTime() - now),
       sound: true,
     };
-    trigger = { seconds: 2 };
+    trigger = {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 2,
+      repeats: false,
+    };
   } else {
     // Normalny tryb — zaplanowane na przyszłość
     content = {

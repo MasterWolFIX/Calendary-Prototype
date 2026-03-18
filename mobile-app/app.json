@@ -34,11 +34,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#6366f1",
-          "androidMode": "default",
-          "androidCollapsedTitle": "Calendary",
-          "iosDisplayInForeground": true,
-          "androidStatusBarColor": "#6366f1"
+          "color": "#6366f1"
         }
       ]
     ],

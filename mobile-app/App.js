@@ -176,7 +176,7 @@ export default function App() {
   // ustawienia powiadomień
   const [settingsModal, setSettingsModal] = useState(false);
   const [notifEnabled, setNotifEnabled] = useState(true);
-  const [notifMinutes, setNotifMinutes] = useState(15);
+  const [notifMinutes, setNotifMinutes] = useState([15]);
 
   // confirm (usuwanie)
   const [confirmModal, setConfirmModal] = useState(false);
@@ -205,7 +205,14 @@ export default function App() {
         const en = await SecureStore.getItemAsync('notif_enabled');
         const min = await SecureStore.getItemAsync('notif_minutes');
         if (en !== null) setNotifEnabled(en === 'true');
-        if (min !== null) setNotifMinutes(parseInt(min, 10));
+        if (min !== null) {
+          try {
+            const parsed = JSON.parse(min);
+            setNotifMinutes(Array.isArray(parsed) ? parsed : [parsed]);
+          } catch {
+            setNotifMinutes([parseInt(min, 10) || 15]);
+          }
+        }
       } catch { }
     })();
   }, []);
@@ -280,10 +287,18 @@ export default function App() {
     try {
       if (editingEventId) {
         await axios.put(`${API_URL}/events/${editingEventId}`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor, recurrence }, { headers: { Authorization: `Bearer ${token}` } });
-        if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
+        if (notifEnabled && Array.isArray(notifMinutes)) {
+          for (const minutes of notifMinutes) {
+            await scheduleNotification(title.trim(), startISO, minutes);
+          }
+        }
       } else {
         await axios.post(`${API_URL}/events`, { title: title.trim(), description: desc.trim(), start_date: startISO, end_date: endISO, color: selectedColor, recurrence }, { headers: { Authorization: `Bearer ${token}` } });
-        if (notifEnabled) await scheduleNotification(title.trim(), startISO, notifMinutes);
+        if (notifEnabled && Array.isArray(notifMinutes)) {
+          for (const minutes of notifMinutes) {
+            await scheduleNotification(title.trim(), startISO, minutes);
+          }
+        }
       }
       setModal(false); setTitle(''); setDesc(''); setHasEnd(false); setSelectedColor(COLORS[0]); setRecurrence('none'); setEditingEventId(null);
       setRefresh(p => p + 1);
@@ -825,12 +840,29 @@ const TimePickerUI = () => {
             {notifEnabled && (
               <>
                 <Text style={[s.fieldLbl, { marginTop: 14, marginBottom: 10 }]}>CZAS PRZED WYDARZENIEM</Text>
-                {NOTIF_OPTIONS.map(opt => (
-                  <TouchableOpacity key={opt.value} style={[s.notifOption, notifMinutes === opt.value && s.notifOptionActive]} onPress={async () => { setNotifMinutes(opt.value); await SecureStore.setItemAsync('notif_minutes', String(opt.value)); }} activeOpacity={0.75}>
-                    <Text style={[s.notifOptionTxt, notifMinutes === opt.value && s.notifOptionTxtActive]}>{opt.label}</Text>
-                    {notifMinutes === opt.value && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
-                  </TouchableOpacity>
-                ))}
+                {NOTIF_OPTIONS.map(opt => {
+                  const isSelected = notifMinutes.includes(opt.value);
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[s.notifOption, isSelected && s.notifOptionActive]}
+                      onPress={async () => {
+                        let newMinutes;
+                        if (isSelected) {
+                          newMinutes = notifMinutes.filter(m => m !== opt.value);
+                        } else {
+                          newMinutes = [...notifMinutes, opt.value];
+                        }
+                        setNotifMinutes(newMinutes);
+                        await SecureStore.setItemAsync('notif_minutes', JSON.stringify(newMinutes));
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[s.notifOptionTxt, isSelected && s.notifOptionTxtActive]}>{opt.label}</Text>
+                      {isSelected && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
               </>
             )}
           </View>

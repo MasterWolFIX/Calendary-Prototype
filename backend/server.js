@@ -6,10 +6,29 @@ const express = require('express');
 const cors = require('cors');
 
 // ── Importy modułów projektu ─────────────────────────────────────────────────
+const pool = require('./db');
 const authRoutes = require('./routes/auth');
 const eventsRoutes = require('./routes/events');
 const authMiddleware = require('./middleware/authMiddleware');
 const { initNotificationService } = require('./services/notificationService');
+
+// ── Auto-migracja – dodaj brakujące kolumny ──────────────────────────────────
+async function runMigrations() {
+    const migrations = [
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS color VARCHAR(50)",
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS recurrence VARCHAR(20) DEFAULT 'none'",
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS excluded_dates JSONB DEFAULT '[]'",
+        "ALTER TABLE events ALTER COLUMN end_date DROP NOT NULL",
+    ];
+    for (const sql of migrations) {
+        try {
+            await pool.query(sql);
+        } catch (e) {
+            // Ignoruj błędy (np. kolumna już istnieje)
+        }
+    }
+    console.log('[DB] Migracje zakończone.');
+}
 
 // ── Konfiguracja aplikacji ───────────────────────────────────────────────────
 const app = express();
@@ -55,13 +74,14 @@ app.use((err, _req, res, _next) => {
 });
 
 // ── Start serwera ────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-    console.log(`\n🚀 Calendary API uruchomione na porcie ${PORT}`);
-    console.log(`   Health check: http://localhost:${PORT}/api/health\n`);
+runMigrations().then(() => {
+    app.listen(PORT, () => {
+        console.log(`\n🚀 Calendary API uruchomione na porcie ${PORT}`);
+        console.log(`   Health check: http://localhost:${PORT}/api/health\n`);
 
-    // Uruchom silnik powiadomień (cron + Firebase)
-    // Komentarz: zainicjuj DOPIERO po starcie serwera, żeby pula DB była gotowa
-    initNotificationService();
+        // Uruchom silnik powiadomień (cron + Firebase)
+        initNotificationService();
+    });
 });
 
 module.exports = app; // eksport dla testów jednostkowych
